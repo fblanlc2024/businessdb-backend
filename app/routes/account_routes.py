@@ -296,19 +296,6 @@ def refresh_token():
 
         return jsonify({'message': str(e)}), 401
     
-@account_routes_bp.route('/admin_status_check', methods=['GET'])
-@jwt_required()
-def admin_status_check():
-    current_user = get_jwt_identity()
-
-    user_document = accounts_collection.find_one({"username": current_user})
-
-    if user_document:
-        is_admin = user_document.get("isAdmin", False)
-        return jsonify({"isAdmin": is_admin}), 200
-    else:
-        return jsonify({"error": "User not found"}), 404
-    
 def is_rate_limit_exceeded(ip, username):
     current_time = datetime.utcnow()
     

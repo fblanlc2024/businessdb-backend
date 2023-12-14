@@ -23,8 +23,11 @@ import re
 
 from app import client, db
 from app.models import Business
+from .util_routes import is_user_admin
 businesses_collection = db.businesses
 counters_collection = db.counters
+accounts_collection = db.accounts
+
 FOURSQUARE_API_KEY = "fsq3ToBA7PvQLrce5qB5hgyRhLjn3L6D9JgVhgeAWKaCY0g="
 data_routes_bp = Blueprint('data_routes', __name__)
 
@@ -149,3 +152,33 @@ def get_next_business_id():
         return_document=True
     )
     return result['seq']
+
+
+@data_routes_bp.route('/edit_business_info', methods=['POST'])
+@jwt_required()
+def edit_business_info():
+    current_user = get_jwt_identity()
+
+    try:
+        if not is_user_admin(current_user, accounts_collection):
+            return jsonify({"error": "Unauthorized access"}), 403
+
+        data = request.json
+        business_id = data['business_id']
+        business_info = data['business_info']
+
+        result = businesses_collection.update_one(
+            {"business_id": business_id},
+            {"$set": business_info}
+        )
+        if result.matched_count == 0:
+            return jsonify({"error": "Business not found"}), 404
+        elif result.modified_count == 0:
+            return jsonify({"error": "No changes were made"}), 400
+
+        return jsonify({"message": "Business information updated successfully"}), 200
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": "An error occurred"}), 500

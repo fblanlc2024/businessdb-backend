@@ -58,10 +58,11 @@ limiter = Limiter(
     default_limits_exempt_when=lambda: False
 )
 
-from app.routes import main_route, account_routes, login_routes, data_routes, pdf_routes
+from app.routes import main_route, account_routes, login_routes, data_routes, pdf_routes, util_routes
 
 app.register_blueprint(main_route.bp)
 app.register_blueprint(account_routes.account_routes_bp)
 app.register_blueprint(login_routes.login_routes_bp)
 app.register_blueprint(data_routes.data_routes_bp)
 app.register_blueprint(pdf_routes.pdf_routes_bp)
+app.register_blueprint(util_routes.util_routes_bp)
