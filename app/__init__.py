@@ -59,7 +59,6 @@ limiter = Limiter(
 )
 
 from app.routes import main_route, account_routes, login_routes, data_routes, pdf_routes, util_routes
-
 app.register_blueprint(main_route.bp)
 app.register_blueprint(account_routes.account_routes_bp)
 app.register_blueprint(login_routes.login_routes_bp)
