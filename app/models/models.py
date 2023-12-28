@@ -1,7 +1,6 @@
-import pymongo
-from pymongo import MongoClient
 import datetime
 
+# For MongoDB/database model - native account has additional logic that should preferrably not be inside the database
 class Account:
     def __init__(self, username, password_hash, isAdmin=False):
         self.username = username
@@ -19,24 +18,24 @@ class Account:
             "updated_at": self.updated_at
         }
 
-class GoogleAccount:
-    def __init__(self, google_id, account_name, account_id, isAdmin=False):
-        self.google_id = google_id  # New field for Google ID
-        self.account_name = account_name
-        self.account_id = account_id
-        self.isAdmin = isAdmin
-        self.created_at = datetime.datetime.utcnow()
-        self.updated_at = datetime.datetime.utcnow()
+# class GoogleAccount:
+#     def __init__(self, google_id, account_name, account_id, isAdmin=False):
+#         self.google_id = google_id  # New field for Google ID
+#         self.account_name = account_name
+#         self.account_id = account_id
+#         self.isAdmin = isAdmin
+#         self.created_at = datetime.datetime.utcnow()
+#         self.updated_at = datetime.datetime.utcnow()
 
-    def to_dict(self):
-        return {
-            "google_id": self.google_id,  # Include Google ID in the dict
-            "account_name": self.account_name,
-            "account_id": self.account_id,
-            "statistics": self.statistics,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at
-        }
+#     def to_dict(self):
+#         return {
+#             "google_id": self.google_id,  # Include Google ID in the dict
+#             "account_name": self.account_name,
+#             "account_id": self.account_id,
+#             "statistics": self.statistics,
+#             "created_at": self.created_at,
+#             "updated_at": self.updated_at
+#         }
 
 class Business:
     def __init__(self, business_name, address, organization_type, resources_available, has_available_resources, contact_info):

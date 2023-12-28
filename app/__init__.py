@@ -11,25 +11,43 @@ from flask_limiter import Limiter, RateLimitExceeded
 from flask_limiter.util import get_remote_address
 from datetime import datetime
 from redis import Redis
+import openai
+from openai import OpenAI
+from flask_socketio import SocketIO, emit
+from .routes.ai_socket_events import setup_socket_events, client
 
 dotenv_path = "D:\\Projects\\Python\\math-quiz\\app\\important_variables.env"
 dotenv.load_dotenv(dotenv_path)
 logging.basicConfig(level=logging.DEBUG)
 
+static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
+if not os.path.exists(static_folder_path):
+    os.makedirs(static_folder_path)
+
 app = Flask(__name__)
 jwt = JWTManager(app)
-app.config['JWT_COOKIE_CSRF_PROTECT'] = True
-app.secret_key = os.getenv('FLASK_SECRET_KEY')
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 
+app.secret_key = os.getenv('FLASK_SECRET_KEY')
+app.config['JWT_COOKIE_CSRF_PROTECT'] = True
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(seconds=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 3600)))
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(seconds=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES', 604800)))
-
 app.config['JWT_TOKEN_LOCATION'] = ["cookies"]
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
+app.config['CLIENT_ID'] = os.getenv('CLIENT_ID')
+app.config['CLIENT_SECRET'] = os.getenv('CLIENT_SECRET')
+app.config['REDIRECT_URI'] = os.getenv('REDIRECT_URI')
+app.config['AUTH_URI'] = os.getenv('AUTH_URI')
+app.config['TOKEN_URI'] = os.getenv('TOKEN_URI')
+app.config['ATLAS_API_KEY'] = os.getenv('ATLAS_API_KEY')
+app.config['ATLAS_GROUP_ID'] = os.getenv('ATLAS_GROUP_ID')
+app.config['ATLAS_CLUSTER_NAME'] = os.getenv('ATLAS_CLUSTER_NAME')
+app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
 
 Session(app)
+socketio = SocketIO(app, cors_allowed_origins="*") 
+setup_socket_events(socketio)  # Setup SocketIO events
 
 if not app.secret_key:
     raise ValueError("No secret key set for Flask application")
@@ -58,10 +76,13 @@ limiter = Limiter(
     default_limits_exempt_when=lambda: False
 )
 
-from app.routes import main_route, account_routes, login_routes, data_routes, pdf_routes, util_routes
+from app.routes import ai_socket_events, main_route, account_routes, login_routes, data_routes, pdf_routes, util_routes, ai_socket_events
 app.register_blueprint(main_route.bp)
 app.register_blueprint(account_routes.account_routes_bp)
 app.register_blueprint(login_routes.login_routes_bp)
 app.register_blueprint(data_routes.data_routes_bp)
 app.register_blueprint(pdf_routes.pdf_routes_bp)
 app.register_blueprint(util_routes.util_routes_bp)
+app.register_blueprint(ai_socket_events.ai_routes_bp)
+
+__all__ = ['app', 'socketio']

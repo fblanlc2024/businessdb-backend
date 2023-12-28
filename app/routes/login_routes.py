@@ -1,246 +1,127 @@
-from flask import Flask, Blueprint, redirect, request, jsonify, make_response, current_app
-import requests
-from google.oauth2 import id_token
-from google_auth_oauthlib.flow import Flow
-from google.auth.transport import requests as google_requests
-import os
+from flask import Blueprint, redirect, request, jsonify, make_response
 from app import db
-from app.models import GoogleAccount
 from datetime import datetime, timedelta
-import logging
-from google.auth.transport import requests as google_auth_requests
-from google.oauth2.credentials import Credentials
-from google.oauth2 import id_token
-from google.auth.exceptions import RefreshError
-import json
 import calendar
-from app import redis_client
 
-# OAuth2 client setup
-CLIENT_ID = '898438500076-f6on6105fpi2e913mi7kudtva2ti0qve.apps.googleusercontent.com'
-CLIENT_SECRET = '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'
-REDIRECT_URI = 'https://localhost:5000/login/callback'
-
-
-AUTH_URI = 'https://accounts.google.com/o/oauth2/auth'
-TOKEN_URI = 'https://accounts.google.com/o/oauth2/token'
-USER_INFO = 'https://www.googleapis.com/userinfo/v2/me'
+from ..classes.google.google_account import GoogleAccount
+from ..classes.google.google_auth import GoogleAuth
+from ..classes.google.google_account_dal import GoogleAccountDAL
 
 login_routes_bp = Blueprint('login_routes_bp', __name__)
-refresh_tokens_collection = db.refresh_tokens
+
+google_account_dal = GoogleAccountDAL(db)
+google_auth = GoogleAuth(google_account_dal)
 
 @login_routes_bp.route("/login")
-def login():
+def login_route():
     client_ip = request.remote_addr
-    ip_rate_limit_key = f"ip_rate_limit:{client_ip}"
+    login_result = GoogleAccount.login(client_ip)
 
-    # Check rate limit
-    if redis_client.exists(ip_rate_limit_key):
-        return jsonify({'error': 'IP rate limit exceeded. Please try again later.'})
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "auth_uri": AUTH_URI,
-                "token_uri": TOKEN_URI,
-                "redirect_uris": [REDIRECT_URI]
-            }
-        },
-        scopes=["https://www.googleapis.com/auth/userinfo.profile"],
-    )
-    flow.redirect_uri = REDIRECT_URI
-    authorization_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes='true',
-        prompt='select_account consent'
-    )
-    response = make_response(redirect(authorization_url))
-    response.set_cookie('state', state, httponly=True)
-    return response
+    return create_login_response(login_result)
 
 @login_routes_bp.route("/login/callback")
-def callback():
+def callback_route():
     state = request.cookies.get('state')
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "auth_uri": AUTH_URI,
-                "token_uri": TOKEN_URI,
-                "redirect_uris": [REDIRECT_URI],
-            }
-        },
-        scopes=["https://www.googleapis.com/auth/userinfo.profile"],
-        state=state,
-    )
-
-    flow.redirect_uri = REDIRECT_URI
     authorization_response = request.url
-    flow.fetch_token(authorization_response=authorization_response)
+    credentials = google_auth.complete_oauth_flow(authorization_response, state)
+    user_info = google_auth.get_user_info(credentials)
+    GoogleAccount.update_or_create_google_account(user_info, credentials)
 
-    credentials = flow.credentials
-    session = google_requests.AuthorizedSession(credentials)
-    user_info = session.get(USER_INFO).json()
-
-    existing_account = db.google_accounts.find_one({"google_id": user_info['id']})
-
-    if not existing_account:
-        google_account = {
-            "google_id": user_info['id'],
-            "account_name": user_info['name'],
-            "access_token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-            "token_expiry": credentials.expiry,
-        }
-        db.google_accounts.insert_one(google_account)
-    else:
-        db.google_accounts.update_one(
-            {"google_id": user_info['id']},
-            {
-                "$set": {
-                    "access_token": credentials.token,
-                    "refresh_token": credentials.refresh_token,
-                    "token_expiry": credentials.expiry
-                }
-            }
-        )
-
-    response = make_response(redirect("https://localhost:8080/posting"))
-
-    # Set access token in HttpOnly cookie
-    expiry_timestamp = credentials.expiry.timestamp()
-    current_timestamp = datetime.utcnow().timestamp()
-    seconds_until_expiry = expiry_timestamp - current_timestamp
-
-    access_token_expiration = datetime.utcnow() + timedelta(seconds=seconds_until_expiry)
-    response.set_cookie('access_token', credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
-    response.set_cookie('id_token', credentials.id_token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
-
-    # Set refresh token in HttpOnly cookie
-    # Note: Refresh tokens typically don't expire, but you can set a long duration
-    refresh_token_expiration = add_months(datetime.utcnow(), 6)
-    response.set_cookie('refresh_token', credentials.refresh_token, expires=refresh_token_expiration, httponly=True, secure=True, samesite='None')
-    response.set_cookie('logged_in', 'true', httponly=False, max_age=5, secure=True, samesite='None')
-
-    return response
+    return create_callback_response(credentials, user_info)
 
 @login_routes_bp.route('/google_token_refresh', methods=['POST'])
 def google_token_refresh():
-    try:
-        refresh_token = request.cookies.get('refresh_token')
-        if not refresh_token:
-            return jsonify({'message': 'Refresh token not found'}), 401
+    refresh_token = request.cookies.get('refresh_token')
+    if not refresh_token:
+        return jsonify({'message': 'Refresh token not found'}), 401
 
-        # Retrieve user data using the refresh token
-        user_data = db.google_accounts.find_one({"refresh_token": refresh_token})
-        if not user_data:
-            return jsonify({'message': 'User not found'}), 401
-
-        user_id = user_data['account_id']
-
-        credentials = Credentials(
-            None, refresh_token=refresh_token, token_uri=TOKEN_URI,
-            client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
-
-        request_client = google_auth_requests.Request()
-
-        try:
-            credentials.refresh(request_client)
-        except RefreshError:
-            # Refresh token is invalid, clear the refresh token cookie
-            response = make_response(jsonify({'message': 'Refresh token is invalid, please reauthenticate'}), 401)
-            response.set_cookie('refresh_token', '', expires=0, httponly=True, secure=True, samesite='None')
-            return response
-
-        # Refresh token is valid, update access token
-        db.google_accounts.update_one(
-            {"account_id": user_id},
-            {"$set": {"access_token": credentials.token, "token_expiry": credentials.expiry}}
-        )
-        # Create the response object
-        response = make_response(jsonify({'message': 'Token refreshed successfully'}))
-
-        # Calculate the expiration time for the new access token
-        expiry_timestamp = credentials.expiry.timestamp()
-        current_timestamp = datetime.utcnow().timestamp()
-        seconds_until_expiry = expiry_timestamp - current_timestamp
-
-        access_token_expiration = datetime.utcnow() + timedelta(seconds=seconds_until_expiry)
-
-        # Set the new access token in an HttpOnly cookie
-        response.set_cookie('access_token', credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
-
+    google_auth = GoogleAuth()
+    credentials = google_auth.handle_token_refresh(refresh_token)
+    if not credentials:
+        response = clear_refresh_token_cookie()
         return response
 
-    except Exception as e:
-        return jsonify({'message': str(e)}), 500
+    google_account = GoogleAccount(db)
+    user_data = google_account.refresh_user_access_token(refresh_token, credentials)
+    if not user_data:
+        return jsonify({'message': 'User not found'}), 401
+
+    response = create_refresh_token_response(credentials)
+    return response
 
 @login_routes_bp.route('/google_user_data')
 def google_user_data():
     try:
-        current_app.logger.info("Fetching Google user data...")
-
-        # Extract the Google access token from HttpOnly cookie
         google_access_token = request.cookies.get('access_token')
-        current_app.logger.info(f"Received Google access token from cookie: {google_access_token}")
         if not google_access_token:
-            current_app.logger.warning("Access token cookie is missing")
             return jsonify({'message': 'Access token is missing'}), 401
 
-        # current_app.logger.info("Received Google access token from cookie")
-
-        # Use the access token to fetch user data from Google's UserInfo API
-        headers = {'Authorization': 'Bearer ' + google_access_token}
-        response = requests.get(USER_INFO, headers=headers)
-
-        if response.status_code != 200:
-            # If the request fails, the access token is invalid or expired
-            current_app.logger.error("Invalid or expired Google access token")
-            return jsonify({'message': 'Invalid or expired Google access token'}), 401
-
-        google_user_info = response.json()
-        google_user_id = google_user_info['id']
-
-        current_app.logger.info(f"Successfully fetched Google user data for ID: {google_user_id}")
-
-        # Fetch the user data from the database using the Google user ID
-        user_data = db.google_accounts.find_one({"google_id": google_user_id})
-        if not user_data:
-            current_app.logger.warning(f"User not found for Google ID: {google_user_id}")
-            return jsonify({'message': 'User not found'}), 404
-
-        # Prepare the user data to send back to the client
-        response_data = {
-            'google_id': user_data["google_id"],
-            'account_name': user_data["account_name"],
-            'account_id': user_data["account_id"]
-        }
-        current_app.logger.info(f"Le response data: {response_data}")
-
-        return jsonify(response_data), 200
-
+        user_info = google_auth.fetch_user_info_from_google(google_access_token)
+        google_user_id = user_info['id']
+        user_data = GoogleAccount.get_user_data(google_user_id)
+        return jsonify(user_data), 200
+    
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 401
+    
     except Exception as e:
-        current_app.logger.error(f"Error in google_user_data endpoint: {e}")
         return jsonify({'message': 'Internal server error'}), 500
 
-
-# Purges all of the cookies in case they logged in normally before
 @login_routes_bp.route('/logout', methods=['POST'])
 def logout():
-    response = make_response(jsonify({'message': 'Logged out successfully'}))
-    response.set_cookie('access_token', '', expires=0)
-    response.set_cookie('access_token_cookie', '', expires=0)
-    response.set_cookie('refresh_token', '', expires=0)
-    response.set_cookie('refresh_token_cookie', '', expires=0)
-    response.set_cookie('state', '', expires=0)
-    response.set_cookie('id_token', '', expires=0)
-    return response
+    return GoogleAuth.logout_user()
 
+# Helper methods start here
 def add_months(source_date, months):
     month = source_date.month - 1 + months
     year = source_date.year + month // 12
     month = month % 12 + 1
     day = min(source_date.day, calendar.monthrange(year, month)[1])
     return datetime(year, month, day)
+
+def create_login_response(login_result):
+    if 'error' in login_result:
+        return jsonify(login_result), 429
+
+    authorization_url = login_result['authorization_url']
+    state = login_result['state']
+    response = make_response(redirect(authorization_url))
+    response.set_cookie('state', state, httponly=True)
+    return response
+
+def create_callback_response(credentials, redirect_url):
+    response = make_response(redirect(redirect_url))
+
+    # Set access token in HttpOnly cookie
+    access_token_expiration = datetime.utcnow() + timedelta(seconds=(credentials.expiry.timestamp() - datetime.utcnow().timestamp()))
+    response.set_cookie('access_token', credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
+
+    # Set refresh token in HttpOnly cookie
+    refresh_token_expiration = add_months(datetime.utcnow(), 6)
+    response.set_cookie('refresh_token', credentials.refresh_token, expires=refresh_token_expiration, httponly=True, secure=True, samesite='None')
+    
+    return response
+
+def clear_refresh_token_cookie():
+    response = make_response(jsonify({'message': 'Refresh token is invalid, please reauthenticate'}), 401)
+    response.set_cookie('refresh_token', '', expires=0, httponly=True, secure=True, samesite='None')
+    return response
+
+def create_refresh_token_response(credentials):
+    try:
+        # Calculate the expiration time for the new access token
+        expiry_timestamp = credentials.expiry.timestamp()
+        current_timestamp = datetime.utcnow().timestamp()
+        seconds_until_expiry = expiry_timestamp - current_timestamp
+        access_token_expiration = datetime.utcnow() + timedelta(seconds=seconds_until_expiry)
+
+        # Prepare the response
+        response = jsonify({'message': 'Token refreshed successfully'})
+        response = make_response(response)
+
+        # Set the new access token in an HttpOnly cookie
+        response.set_cookie('access_token', value=credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
+        return response
+    
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500

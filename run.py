@@ -1,5 +1,4 @@
-from app import app
+from app import app, socketio
 
 if __name__ == '__main__':
-    app.run(ssl_context=('cert.pem', 'key.pem'), debug=True) 
-    #the key is wombat lol
+    socketio.run(app, ssl_context=('cert.pem', 'key.pem'), debug=True, allow_unsafe_werkzeug=True) 
