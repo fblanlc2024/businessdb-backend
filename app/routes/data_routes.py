@@ -22,7 +22,7 @@ from flask import jsonify
 import re
 
 from app import client, db
-from app.models import Business
+from ..classes.business.business_class import Business
 from .util_routes import is_user_admin
 businesses_collection = db.businesses
 counters_collection = db.counters

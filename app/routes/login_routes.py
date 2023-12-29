@@ -1,11 +1,14 @@
-from flask import Blueprint, redirect, request, jsonify, make_response
+from flask import Blueprint, redirect, request, jsonify, make_response, current_app
 from app import db
 from datetime import datetime, timedelta
 import calendar
+import logging
 
 from ..classes.google.google_account import GoogleAccount
 from ..classes.google.google_auth import GoogleAuth
 from ..classes.google.google_account_dal import GoogleAccountDAL
+
+from app import redis_client
 
 login_routes_bp = Blueprint('login_routes_bp', __name__)
 
@@ -15,7 +18,11 @@ google_auth = GoogleAuth(google_account_dal)
 @login_routes_bp.route("/login")
 def login_route():
     client_ip = request.remote_addr
-    login_result = GoogleAccount.login(client_ip)
+    login_result = GoogleAccount.login(
+        google_auth,
+        client_ip,
+        redis_client=redis_client
+    )
 
     return create_login_response(login_result)
 
@@ -25,9 +32,10 @@ def callback_route():
     authorization_response = request.url
     credentials = google_auth.complete_oauth_flow(authorization_response, state)
     user_info = google_auth.get_user_info(credentials)
-    GoogleAccount.update_or_create_google_account(user_info, credentials)
+    current_app.logger.info(f"user_info from login callback (the target issue): {user_info}")
+    GoogleAccount.update_or_create_google_account(user_info, credentials, google_account_dal)
 
-    return create_callback_response(credentials, user_info)
+    return create_callback_response(credentials, 'https://localhost:8080/posting')
 
 @login_routes_bp.route('/google_token_refresh', methods=['POST'])
 def google_token_refresh():
@@ -35,14 +43,14 @@ def google_token_refresh():
     if not refresh_token:
         return jsonify({'message': 'Refresh token not found'}), 401
 
-    google_auth = GoogleAuth()
     credentials = google_auth.handle_token_refresh(refresh_token)
+    if not credentials:
+        return jsonify({'message': 'Invalid credentials'}), 500
     if not credentials:
         response = clear_refresh_token_cookie()
         return response
-
-    google_account = GoogleAccount(db)
-    user_data = google_account.refresh_user_access_token(refresh_token, credentials)
+    
+    user_data = GoogleAccount.refresh_user_access_token(google_account_dal, refresh_token, credentials)
     if not user_data:
         return jsonify({'message': 'User not found'}), 401
 
@@ -52,24 +60,35 @@ def google_token_refresh():
 @login_routes_bp.route('/google_user_data')
 def google_user_data():
     try:
+        current_app.logger.debug("Entering /google_user_data route")
         google_access_token = request.cookies.get('access_token')
+        current_app.logger.debug(f"Google access token: {google_access_token}")
+
         if not google_access_token:
+            current_app.logger.warning("Access token is missing")
             return jsonify({'message': 'Access token is missing'}), 401
 
         user_info = google_auth.fetch_user_info_from_google(google_access_token)
+        current_app.logger.debug(f"User info retrieved: {user_info}")
         google_user_id = user_info['id']
-        user_data = GoogleAccount.get_user_data(google_user_id)
+        current_app.logger.debug(f"Google User ID: {google_user_id}")
+
+        user_data = GoogleAccount.get_user_data(google_user_id, google_account_dal)
+        current_app.logger.debug(f"User data: {user_data}")
+
         return jsonify(user_data), 200
     
     except ValueError as e:
+        current_app.logger.error(f"ValueError in /google_user_data: {e}")
         return jsonify({'message': str(e)}), 401
     
     except Exception as e:
+        current_app.logger.error(f"Exception in /google_user_data: {e}")
         return jsonify({'message': 'Internal server error'}), 500
 
 @login_routes_bp.route('/logout', methods=['POST'])
 def logout():
-    return GoogleAuth.logout_user()
+    return google_auth.logout_user()
 
 # Helper methods start here
 def add_months(source_date, months):
