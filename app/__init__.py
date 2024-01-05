@@ -29,10 +29,12 @@ jwt = JWTManager(app)
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 app.config['JWT_COOKIE_CSRF_PROTECT'] = True
+app.config["JWT_COOKIE_SECURE"] = True
+app.config['JWT_CSRF_IN_COOKIES'] = True
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(seconds=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 3600)))
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(seconds=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES', 604800)))
-app.config['JWT_TOKEN_LOCATION'] = ["cookies"]
+app.config['JWT_TOKEN_LOCATION'] = ["headers", "cookies"]
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
 app.config['CLIENT_ID'] = os.getenv('CLIENT_ID')
@@ -41,6 +43,7 @@ app.config['REDIRECT_URI'] = os.getenv('REDIRECT_URI')
 app.config['AUTH_URI'] = os.getenv('AUTH_URI')
 app.config['TOKEN_URI'] = os.getenv('TOKEN_URI')
 app.config['USER_INFO'] = os.getenv('USER_INFO')
+app.config['FOURSQUARE_API_KEY'] = os.getenv('FOURSQUARE_API_KEY')
 app.config['ATLAS_API_KEY'] = os.getenv('ATLAS_API_KEY')
 app.config['ATLAS_GROUP_ID'] = os.getenv('ATLAS_GROUP_ID')
 app.config['ATLAS_CLUSTER_NAME'] = os.getenv('ATLAS_CLUSTER_NAME')
@@ -77,13 +80,10 @@ limiter = Limiter(
     default_limits_exempt_when=lambda: False
 )
 
-from app.routes import ai_socket_events, main_route, account_routes, login_routes, data_routes, pdf_routes, util_routes, ai_socket_events
-app.register_blueprint(main_route.bp)
+from app.routes import ai_socket_events, account_routes, login_routes, data_routes, pdf_routes, util_routes, ai_socket_events
 app.register_blueprint(account_routes.account_routes_bp)
 app.register_blueprint(login_routes.login_routes_bp)
 app.register_blueprint(data_routes.data_routes_bp)
 app.register_blueprint(pdf_routes.pdf_routes_bp)
 app.register_blueprint(util_routes.util_routes_bp)
 app.register_blueprint(ai_socket_events.ai_routes_bp)
-
-__all__ = ['app', 'socketio']

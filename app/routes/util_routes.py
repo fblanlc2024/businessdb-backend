@@ -1,27 +1,57 @@
-from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask import Blueprint, jsonify, request, current_app
+from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
+import logging
+from bson import ObjectId
 
 util_routes_bp = Blueprint("util_routes", __name__)
 from app import db
 
 accounts_collection = db.accounts
+google_accounts_collection = db.google_accounts
 
 @util_routes_bp.route('/admin_status_check', methods=['GET'])
-@jwt_required()
 def admin_status_check():
-    current_user = get_jwt_identity()
+    try:
+        # Attempt to authenticate with JWT in Authorization header
+        verify_jwt_in_request()
+        current_user = get_jwt_identity()
+        current_app.logger.info(f"current_user for admin status check: {current_user}")
+        logging.info(f"JWT authentication successful for user: {current_user}")
+        is_admin = is_user_admin(current_user, accounts_collection, google_accounts_collection)
 
-    user_document = accounts_collection.find_one({"username": current_user})
+        # Use is_user_admin to check admin status
+        if is_admin == True:
+            return jsonify({"isAdmin": True}), 200
+        elif is_admin == False:
+            return jsonify({"isAdmin": False}), 200
+    except Exception as e:
+        logging.warning(f"JWT authentication failed: {e}")
 
-    if user_document:
-        is_admin = user_document.get("isAdmin", False)
-        return jsonify({"isAdmin": is_admin}), 200
-    else:
-        return jsonify({"error": "User not found"}), 404
-    
-def is_user_admin(username, accounts_collection):
-    user_document = accounts_collection.find_one({"username": username})
+    oauth_token = request.cookies.get('access_token_cookie')
+    logging.info(f"OAuth token from cookie: {oauth_token}")
+
+    if oauth_token:
+        # Use is_user_admin to check admin status with OAuth token
+        if is_user_admin(oauth_token, accounts_collection, google_accounts_collection):
+            return jsonify({"isAdmin": True}), 200
+        else:
+            logging.warning("No user found with the provided OAuth token")
+
+    logging.error("User not authenticated")
+    return jsonify({"error": "User not authenticated"}), 401
+
+def is_user_admin(identifier, accounts_collection, google_accounts_collection):
+    current_app.logger.info(f"Checking admin status for identifier: {identifier}")
+
+    # Check for the user in the native accounts collection by username
+    user_document = accounts_collection.find_one({"username": identifier})
     if user_document:
         return user_document.get("isAdmin", False)
-    else:
-        raise ValueError("User not found")
+
+    # If not found, check in the Google accounts collection by access token
+    user_document = google_accounts_collection.find_one({"access_token": identifier})
+    if user_document:
+        return user_document.get("isAdmin", False)
+
+    # If the user is not found in either collection
+    return jsonify({"error": "User not found"}), 401

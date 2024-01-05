@@ -1,54 +1,34 @@
-from flask import Blueprint, jsonify, request, make_response, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask import Blueprint, jsonify, request, current_app
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt, verify_jwt_in_request
+from flask_jwt_extended.exceptions import JWTExtendedException
 import logging
 from flask_limiter import RateLimitExceeded
-
-from app import db
+from flask import jsonify
 from app import redis_client, limiter
-from ..classes.native.native_account import NativeAccount
-from ..classes.native.native_account_dal import NativeAccountDAL
-from ..classes.native.native_auth import NativeAuth
-from ..classes.redis.redis_layer import RedisLayer
 
 account_routes_bp = Blueprint('account_routes', __name__)
 
-account_dal = NativeAccountDAL(db)
-redis_layer = RedisLayer(redis_client)
-native_auth = NativeAuth(account_dal, redis_layer)
+from ..classes.native.native_auth import NativeAuth
 
 logging.basicConfig(level=logging.INFO)
 
 # Create
 @account_routes_bp.route('/account', methods=['POST'])
-def create_account_route():
+def create_account():
     data = request.json
     username = data['username']
     password = data['password']
-
-    result = NativeAccount.create_account(
-        username,
-        password,
-        account_dal
-    )
-
-    return create_response(result)
+    return NativeAuth.create_account(username, password)
 
 # Update
 @account_routes_bp.route('/account', methods=['PUT'])
 def update_account():
     data = request.json
     username = data['username']
-    new_username = data['new_username']
-    new_password = data['new_password']
+    new_username = data.get('new_username')
+    new_password = data.get('new_password')
 
-    result = NativeAccount.update_account(
-        username,
-        new_username,
-        new_password,
-        account_dal
-    )
-
-    return create_response(result)
+    return NativeAuth.update_account(username, new_username, new_password)
 
 # Delete
 @account_routes_bp.route('/account', methods=['DELETE'])
@@ -56,105 +36,69 @@ def delete_account():
     data = request.json
     username = data['username']
 
-    result = NativeAccount.delete_account(
-        username,
-        account_dal = account_dal
-    )
-
-    return create_response(result)
+    return NativeAuth.delete_account(username)
 
 # Reset password only (different from other put method, which resets username and password)
 @account_routes_bp.route('/reset_password', methods=['PUT'])
 def reset_password():
     data = request.json
     username = data['username']
-    new_password = data['new_password']
+    new_password = data.get('new_password')
 
-    result = NativeAccount.reset_password(
-        username,
-        new_password,
-        account_dal = account_dal
-    )
-
-    return create_response(result)
-
+    return NativeAuth.reset_password(username, new_password)
 
 @account_routes_bp.route('/protected', methods=['GET'])
 @jwt_required()
-def protected_route():
+def protected():
     current_user = get_jwt_identity()
-    result = NativeAccount.protected(
-        current_user,
-        account_dal
-    )
 
-    return create_response(result)
+    return NativeAuth.protected(current_user)
     
 @account_routes_bp.route('/token_login_set', methods=['POST'])
 @limiter.limit("75 per 3 minutes")
-def token_login_route():
+def token_login():
     client_ip = request.remote_addr
     data = request.json
-    username = data['username']
-    password = data['password']
+    username = data.get('username')
+    password = data.get('password')
 
-    result = NativeAccount.token_login(
-        client_ip,
-        username,
-        password,
-        native_auth
-    )
+    logging.info(f"Login attempt for username: {username} from IP: {client_ip}")
 
-    cookies = result.pop('cookies', None)
+    key = f"login_attempts:{client_ip}:{username}"
+    expiry_key = f"username_expiry:{username}"
 
-    return create_response(result, cookies=cookies)
+    return NativeAuth.token_login(client_ip, username, password, key, expiry_key)
     
 # Rolling Refresh Token System
 @account_routes_bp.route('/token_refresh', methods=['POST'])
-@jwt_required(refresh=True)
-def refresh_token_route():
+def refresh_token():
+    # Extract CSRF token from headers
     received_csrf_token = request.headers.get('X-CSRF-TOKEN')
-    old_refresh_token = request.cookies.get('refresh_token_cookie')
-    logging.info(f"Received refresh token cookie: {old_refresh_token}")
-    current_user = get_jwt_identity()
+    # current_app.logger.info("CSRF TOKEN THAT WAS FOUND: %s", received_csrf_token)
     
-    result = NativeAccount.refresh_token(
-        received_csrf_token,
-        old_refresh_token,
-        current_user
-    )
+    if not received_csrf_token:
+        current_app.logger.error("CSRF token missing in headers.")
+        return jsonify({'message': 'CSRF token missing'}), 403
 
-    cookies = result.pop('cookies', None)
+    # Ensure that the JWT exists and is valid
+    verify_jwt_in_request(refresh=True)
+    
+    # Extract CSRF token from the current JWT
+    jwt_data = get_jwt()
+    stored_csrf_token = jwt_data.get('csrf')
 
-    return create_response(result, cookies=cookies)
+    current_user = get_jwt_identity()
+
+    return NativeAuth.refresh_token(received_csrf_token, stored_csrf_token, current_user)
     
 @account_routes_bp.errorhandler(RateLimitExceeded)
-def handle_rate_limit_error(e, redis_layer):
+def handle_rate_limit_error(e):
     client_ip = request.remote_addr
+    ip_rate_limit_key = f"ip_rate_limit:{client_ip}"
 
-    if not redis_layer.is_ip_rate_limited(client_ip):
-        redis_layer.set_ip_rate_limit(client_ip)
+    # Check if a lockout key already exists for this IP
+    if not redis_client.exists(ip_rate_limit_key):
+        redis_client.set(ip_rate_limit_key, 1, ex=3600)
+        logging.info(f"Set a 1-hour rate limit lockout for IP: {client_ip}")
 
     return jsonify({'error': 'Rate limit exceeded. Please try again in 1 hour.'}), 429
-
-def create_response(result, cookies=None):
-    status_code = result.get('status', 200 if 'message' in result else 400)
-
-    # Prepare the response body dynamically
-    response_body = {key: value for key, value in result.items() if key not in ['status', 'cookies']}
-
-    response = make_response(jsonify(response_body), status_code)
-
-    # Set cookies if provided
-    if cookies:
-        for cookie_key, cookie_details in cookies.items():
-            response.set_cookie(
-                cookie_key,
-                value=cookie_details['value'],
-                max_age=cookie_details.get('max_age', None),
-                httponly=cookie_details.get('httponly', True),
-                samesite=cookie_details.get('samesite', 'None'),
-                secure=cookie_details.get('secure', True)
-            )
-
-    return response
