@@ -46,6 +46,24 @@ def get_business_info():
 @data_routes_bp.route('/add_business', methods=['POST'])
 def add_business():
     data = request.json
+    try:
+        verify_jwt_in_request()
+        current_user = get_jwt_identity()
+    except Exception as jwt_error:
+        current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+        # Fallback to OAuth token
+        oauth_token = request.cookies.get('access_token_cookie')
+        current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+        if oauth_token:
+            current_user = oauth_token
+        else:
+            current_app.logger.error("User not found")
+            return jsonify({"error": "User not found"}), 401
+
+    # Check if the user is an admin
+    if not is_user_admin(current_user, accounts_collection, google_accounts_collection):
+        return jsonify({"error": "User not authenticated"}), 401
     
     return DataHandler.add_business(data)
 
@@ -90,7 +108,6 @@ def edit_business_info():
     return DataHandler.edit_business_info(business_id, business_info)
 
 @data_routes_bp.route('/add_address/<int:business_id>', methods=['POST'])
-@jwt_required()
 def add_address(business_id):
     try:
         verify_jwt_in_request()
@@ -113,3 +130,48 @@ def add_address(business_id):
     data = request.json
     address_data = data['address']
     return DataHandler.add_business_address(business_id, address_data)
+
+@data_routes_bp.route('/edit_address/<int:address_id>', methods=['PUT'])
+def edit_address(address_id):
+    try:
+        verify_jwt_in_request()
+        current_user = get_jwt_identity()
+    except Exception as jwt_error:
+        current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+        # Fallback to OAuth token
+        oauth_token = request.cookies.get('access_token_cookie')
+        current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+        if oauth_token:
+            current_user = oauth_token
+        else:
+            current_app.logger.error("User not authenticated")
+            return jsonify({"error": "User not authenticated"}), 401
+        
+    if not is_user_admin(current_user, accounts_collection, google_accounts_collection):
+        return jsonify({"error": "Unauthorized access"}), 403
+
+    address_data = request.json
+    return DataHandler.edit_business_address(address_id, address_data)
+
+@data_routes_bp.route('/delete_address/<int:address_id>', methods=['PUT'])
+def delete_address(address_id):
+    try:
+        verify_jwt_in_request()
+        current_user = get_jwt_identity()
+    except Exception as jwt_error:
+        current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+        # Fallback to OAuth token
+        oauth_token = request.cookies.get('access_token_cookie')
+        current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+        if oauth_token:
+            current_user = oauth_token
+        else:
+            current_app.logger.error("User not authenticated")
+            return jsonify({"error": "User not authenticated"}), 401
+        
+    if not is_user_admin(current_user, accounts_collection, google_accounts_collection):
+        return jsonify({"error": "Unauthorized access"}), 403
+
+    return DataHandler.delete_business_address(address_id)

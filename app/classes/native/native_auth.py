@@ -90,20 +90,37 @@ class NativeAuth:
         return jsonify({'message': 'Password updated successfully'}), 200
     
     def protected(current_user):
+        csrf_token = request.headers.get('X-CSRF-TOKEN')
+        current_app.logger.info(f"CSRF Token: {csrf_token}")
+        
         try:
+            # Check for native account
             account = accounts_collection.find_one({'username': current_user})
-            if not account:
-                current_app.logger.error(f"[Protected Endpoint] - Account not found for username: {current_user}")
-                return jsonify({'message': 'Account not found'}), 404
-            
-            user_id = str(account['_id'])
-            return jsonify(logged_in_as=current_user, id=user_id), 200
+            if account:
+                user_id = str(account['_id'])
+                return jsonify(logged_in_as=current_user, id=user_id), 200
+            else:
+                current_app.logger.info(f"[Protected Endpoint] - Native account not found for username: {current_user}. Trying with OAuth...")
+
+                # Fallback to OAuth token
+                oauth_token = request.cookies.get('access_token_cookie')
+                if oauth_token:
+                    user_document = google_accounts_collection.find_one({"access_token": oauth_token})
+                    if user_document:
+                        user_id = str(user_document['_id'])
+                        return jsonify(logged_in_as=user_document['account_name']), 200
+                    else:
+                        current_app.logger.error("OAuth account not found")
+                        return jsonify({'message': 'OAuth account not found'}), 401
+                else:
+                    current_app.logger.error("OAuth token not found")
+                    return jsonify({'message': 'OAuth token not found'}), 401
+
         except Exception as e:
-            current_app.logger.error(f"JWT verification error: {e}")
-            current_app.logger.error(f"Error encountered: {str(e)}")
+            current_app.logger.error(f"Error during authentication: {e}")
             current_app.logger.error(f"Request headers at the time of error: {request.headers}")
             current_app.logger.error(f"Request cookies at the time of error: {request.cookies}")
-            return jsonify({'message': 'Token verification failed'}), 401
+            return jsonify({'message': 'Authentication failed'}), 500
         
     def token_login(client_ip, username, password, key, expiry_key):
 

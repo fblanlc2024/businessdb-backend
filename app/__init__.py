@@ -34,7 +34,7 @@ app.config['JWT_CSRF_IN_COOKIES'] = True
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(seconds=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 3600)))
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(seconds=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES', 604800)))
-app.config['JWT_TOKEN_LOCATION'] = ["headers", "cookies"]
+app.config['JWT_TOKEN_LOCATION'] = ["cookies"]
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
 app.config['CLIENT_ID'] = os.getenv('CLIENT_ID')

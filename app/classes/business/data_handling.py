@@ -95,7 +95,9 @@ class DataHandler:
     
     def add_business(business_data):
         print("Received business data:", business_data)
-        required_fields = ['business_name', 'organization_type', 'resources_available', 'has_available_resources', 'contact_info']
+        required_fields = ['business_name', 'organization_type', 'resources_available', 
+                        'has_available_resources', 'contact_info', 'yearly_revenue', 
+                        'employee_count', 'customer_satisfaction', 'website_traffic']
 
         # Validate required fields
         for field in required_fields:
@@ -103,6 +105,21 @@ class DataHandler:
                 return jsonify({'error': f'Missing or empty required field: {field}'}), 400
             if field == 'has_available_resources' and not isinstance(business_data[field], bool):
                 return jsonify({'error': f'Invalid data type for field: {field}'}), 400
+            if field in ['yearly_revenue', 'employee_count', 'website_traffic'] and not isinstance(business_data[field], int):
+                return jsonify({'error': f'Invalid data type for field: {field}. Expected integer.'}), 400
+            if field == 'customer_satisfaction' and not isinstance(business_data[field], (float, int)):
+                return jsonify({'error': f'Invalid data type for field: {field}. Expected float or integer.'}), 400
+            
+        contact_info = business_data.get('contact_info', '')
+        phone_number_pattern = r'^\d{10,11}$'
+        if not re.match(phone_number_pattern, contact_info):
+            return jsonify({'error': 'Invalid phone number format. Expected 10 or 11 digits.'}), 400
+        
+        if isinstance(business_data.get('has_available_resources'), str):
+            if business_data['has_available_resources'].lower() == 'true':
+                business_data['has_available_resources'] = True
+            elif business_data['has_available_resources'].lower() == 'false':
+                business_data['has_available_resources'] = False
 
         # Validate address fields
         address_fields = ['line1', 'city', 'state', 'zipcode', 'country']
@@ -121,13 +138,13 @@ class DataHandler:
             address = Address()
             address_id = DataHandler.get_next_address_id()
             address.add_address(
-                address_id,
-                business_data['address']['line1'],
-                business_data['address'].get('line2', ''),
-                business_data['address']['city'],
-                business_data['address']['state'],
-                business_data['address']['zipcode'],
-                business_data['address']['country']
+                address_id=address_id,
+                address_line_1=business_data['address']['line1'],
+                address_line_2=business_data['address'].get('line2', ''),
+                city=business_data['address']['city'],
+                state=business_data['address']['state'],
+                zipcode=business_data['address']['zipcode'],
+                country=business_data['address']['country']
             )
 
             # Insert address data into addresses_collection
@@ -139,7 +156,11 @@ class DataHandler:
                 organization_type=business_data['organization_type'],
                 resources_available=business_data['resources_available'],
                 has_available_resources=business_data['has_available_resources'],
-                contact_info=business_data['contact_info']
+                contact_info=business_data['contact_info'],
+                yearly_revenue=business_data['yearly_revenue'],
+                employee_count=business_data['employee_count'],
+                customer_satisfaction=business_data['customer_satisfaction'],
+                website_traffic=business_data['website_traffic']
             )
             new_business.business_id = DataHandler.get_next_business_id()
 
@@ -212,7 +233,7 @@ class DataHandler:
         except Exception as e:
             return jsonify({"error": "An error occurred"}), 500
         
-    def delete_business_by_id(business_id):
+    def delete_business_address(business_id):
         pipeline = [
             {"$match": {"business_id": business_id}},
             {"$lookup": {
@@ -255,21 +276,58 @@ class DataHandler:
         address = Address()
         address_id = DataHandler.get_next_address_id()
         address.add_address(
-            address_id,
-            address_data['line1'],
-            address_data.get('line2', ''),
-            address_data['city'],
-            address_data['state'],
-            address_data['country'],
-            address_data['zipcode'],
-            address_data['country']
+            address_id=address_id,
+            address_line_1=address_data['line1'],
+            address_line_2=address_data.get('line2', ''),
+            city=address_data['city'],
+            state=address_data['state'],
+            zipcode=address_data['zipcode'],
+            country=address_data['country']
         )
 
         addresses_collection.insert_one(address.to_dict())
         
         linker = Linker()
-        linker.add_linker(business_id, address_id)
+        linker.add_link(business_id, address_id)
         linker_collection.insert_one(linker.to_dict())
+
+        return jsonify({"message": "Address added successfully"}), 200
+    
+    def edit_business_address(address_id, address_data):
+        try:
+            # Define mapping from input fields to database fields
+            field_mapping = {
+                'line1': 'address_line_1',
+                'line2': 'address_line_2',  # Assuming you have a similar case for line2
+                'city': 'city',
+                'state': 'state',
+                'zipcode': 'zipcode',
+                'country': 'country'
+            }
+
+            update_data = {}
+
+            # Check required fields
+            for input_field, db_field in field_mapping.items():
+                if input_field in address_data and address_data[input_field].strip():
+                    update_data[db_field] = address_data[input_field]
+                elif db_field != 'address_line_2':  # Skip optional field
+                    return jsonify({'error': f'Missing or empty required field: {input_field}'}), 400
+
+            # Update the address in the database
+            update_result = addresses_collection.update_one(
+                {'address_id': address_id},
+                {'$set': update_data}
+            )
+
+            if update_result.matched_count == 0:
+                return jsonify({'error': 'Address not found'}), 404
+            elif update_result.modified_count == 0:
+                return jsonify({'error': 'No changes were made'}), 200
+
+            return jsonify({'message': 'Address updated successfully'}), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
     @staticmethod
     def get_next_business_id():
