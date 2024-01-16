@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from flask import jsonify
 
 from app import db
@@ -154,7 +154,7 @@ def edit_address(address_id):
     address_data = request.json
     return DataHandler.edit_business_address(address_id, address_data)
 
-@data_routes_bp.route('/delete_address/<int:address_id>', methods=['PUT'])
+@data_routes_bp.route('/delete_address/<int:address_id>', methods=['DELETE'])
 def delete_address(address_id):
     try:
         verify_jwt_in_request()
@@ -175,3 +175,25 @@ def delete_address(address_id):
         return jsonify({"error": "Unauthorized access"}), 403
 
     return DataHandler.delete_business_address(address_id)
+
+@data_routes_bp.route('/backup_database', methods=['POST'])
+def backup_database():
+    # try:
+    #     verify_jwt_in_request()
+    #     current_user = get_jwt_identity()
+    # except Exception as jwt_error:
+    #     current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+    #     # Fallback to OAuth token
+    #     oauth_token = request.cookies.get('access_token_cookie')
+    #     current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+    #     if oauth_token:
+    #         current_user = oauth_token
+    #     else:
+    #         current_app.logger.error("User not authenticated")
+    #         return jsonify({"error": "User not authenticated"}), 401
+        
+    # if not is_user_admin(current_user, accounts_collection, google_accounts_collection):
+    #     return jsonify({"error": "Unauthorized access"}), 403
+    
+    return DataHandler.backup_database()

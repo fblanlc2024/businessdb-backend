@@ -1,7 +1,9 @@
 from flask import jsonify, current_app
 import requests
-from app import db
+from app import db, cos
 import re
+import json
+from io import BytesIO
 from ...models.business import Business
 from ...routes.util_routes import is_user_admin
 from ...models.address import Address
@@ -14,6 +16,8 @@ accounts_collection = db.accounts
 google_accounts_collection = db.google_accounts
 addresses_collection = db.addresses
 linker_collection = db.linker
+
+fbla_bucket = cos.Bucket('fbla-bucket')
 
 FOURSQUARE_API_KEY = app.config['FOURSQUARE_API_KEY']
 
@@ -233,48 +237,34 @@ class DataHandler:
         except Exception as e:
             return jsonify({"error": "An error occurred"}), 500
         
-    def delete_business_address(business_id):
-        pipeline = [
-            {"$match": {"business_id": business_id}},
-            {"$lookup": {
-                "from": "linker",
-                "localField": "business_id",
-                "foreignField": "business_id",
-                "as": "linked_addresses"
-            }},
-            {"$unwind": "$linked_addresses"},
-            {"$lookup": {
-                "from": "addresses",
-                "localField": "linked_addresses.address_id",
-                "foreignField": "address_id",
-                "as": "address_details"
-            }},
-            {"$unwind": "$address_details"},
-            {"$project": {"address_id": "$address_details.address_id"}}
-        ]
+    def delete_business_address(address_id):
+        # Delete the address document
+        address_delete_result = addresses_collection.delete_one({"address_id": address_id})
+        if address_delete_result.deleted_count == 0:
+            return jsonify({"error": "Address not found or already deleted"}), 404
 
-        # Get all linked address IDs
-        linked_address_ids = [
-            doc['address_id'] for doc in businesses_collection.aggregate(pipeline)
-        ]
+        # Delete the link document in the linker collection
+        linker_delete_result = linker_collection.delete_one({"address_id": address_id})
+        if linker_delete_result.deleted_count == 0:
+            return jsonify({"message": "Address deleted successfully, but no linked record found"}), 200
 
-        # Delete all linked addresses
-        if linked_address_ids:
-            addresses_collection.delete_many({"address_id": {"$in": linked_address_ids}})
-
-        # Delete the business document
-        business_delete_result = businesses_collection.delete_one({"business_id": business_id})
-        if business_delete_result.deleted_count == 0:
-            return jsonify({"error": "Business not found or already deleted"}), 404
-
-        # Delete all link documents
-        linker_collection.delete_many({"business_id": business_id})
-
-        return jsonify({"message": "Business and all associated addresses deleted successfully"}), 200
+        return jsonify({"message": "Address and its link deleted successfully"}), 200
 
     def add_business_address(business_id, address_data):
         address = Address()
         address_id = DataHandler.get_next_address_id()
+
+        address_fields = ['line1', 'city', 'state', 'zipcode', 'country']
+        if not address_data or not isinstance(address_data, dict):
+            return jsonify({'error': 'Missing or invalid address field'}), 400
+        for address_field in address_fields:
+            if address_field not in address_data or not address_data[address_field].strip():
+                return jsonify({'error': f'Missing or empty address field: {address_field}'}), 400
+
+        # Validate zipcode format
+        if not re.match(r'^\d{5}$', address_data['zipcode']):
+            return jsonify({'error': 'Invalid zipcode format.'}), 400
+        
         address.add_address(
             address_id=address_id,
             address_line_1=address_data['line1'],
@@ -295,7 +285,6 @@ class DataHandler:
     
     def edit_business_address(address_id, address_data):
         try:
-            # Define mapping from input fields to database fields
             field_mapping = {
                 'line1': 'address_line_1',
                 'line2': 'address_line_2',  # Assuming you have a similar case for line2
@@ -305,14 +294,19 @@ class DataHandler:
                 'country': 'country'
             }
 
-            update_data = {}
+            if not address_data or not isinstance(address_data, dict):
+                return jsonify({'error': 'Missing or invalid address field'}), 400
 
-            # Check required fields
+            update_data = {}
             for input_field, db_field in field_mapping.items():
                 if input_field in address_data and address_data[input_field].strip():
                     update_data[db_field] = address_data[input_field]
                 elif db_field != 'address_line_2':  # Skip optional field
                     return jsonify({'error': f'Missing or empty required field: {input_field}'}), 400
+
+            # Validate zipcode format
+            if 'zipcode' in update_data and not re.match(r'^\d{5}$', update_data['zipcode']):
+                return jsonify({'error': 'Invalid zipcode format.'}), 400
 
             # Update the address in the database
             update_result = addresses_collection.update_one(
@@ -328,7 +322,32 @@ class DataHandler:
             return jsonify({'message': 'Address updated successfully'}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+        
+    
+    def backup_database():
+        try:
+            # Iterate over all collections in the database
+            for collection_name in db.list_collection_names():
+                # Access each collection
+                collection = db[collection_name]
+                data = list(collection.find({}))
 
+                # Serialize the data of each collection
+                data_json = json.dumps(data, default=str)
+                data_bytes = data_json.encode('utf-8')
+                data_stream = BytesIO(data_bytes)
+
+                # Create a unique backup file name for each collection
+                json_backup = f'{collection_name}_backup.json'
+
+                # Upload each collection's data to the bucket
+                fbla_bucket.upload_fileobj(Fileobj=data_stream, Key=json_backup)
+
+            return jsonify({"message": "Database backup success!"}), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+        
     @staticmethod
     def get_next_business_id():
         result = counters_collection.find_one_and_update(

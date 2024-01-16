@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, session, request
+from flask import Flask, request
 from flask_session import Session
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -7,22 +7,19 @@ import dotenv
 from flask_jwt_extended import JWTManager
 import logging
 from datetime import timedelta
-from flask_limiter import Limiter, RateLimitExceeded
+from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from datetime import datetime
 from redis import Redis
-import openai
-from openai import OpenAI
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from .routes.ai_socket_events import setup_socket_events, client
+import ibm_boto3
+from ibm_botocore.client import Config
 
-dotenv_path = "D:\\Projects\\Python\\math-quiz\\app\\important_variables.env"
+current_dir = os.path.dirname(__file__)
+dotenv_path = os.path.join(current_dir, 'important_variables.env')
 dotenv.load_dotenv(dotenv_path)
-logging.basicConfig(level=logging.DEBUG)
 
-static_folder_path = os.path.join(os.path.dirname(__file__), 'static')
-if not os.path.exists(static_folder_path):
-    os.makedirs(static_folder_path)
+logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 jwt = JWTManager(app)
@@ -48,6 +45,11 @@ app.config['ATLAS_API_KEY'] = os.getenv('ATLAS_API_KEY')
 app.config['ATLAS_GROUP_ID'] = os.getenv('ATLAS_GROUP_ID')
 app.config['ATLAS_CLUSTER_NAME'] = os.getenv('ATLAS_CLUSTER_NAME')
 app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
+app.config['IBM_API_KEY'] = os.getenv('IBM_API_KEY')
+app.config['IBM_SERVICE_INSTANCE_ID'] = os.getenv('IBM_SERVICE_INSTANCE_ID')
+app.config['IBM_AUTH_URL'] = os.getenv('IBM_AUTH_URL')
+app.config['IBM_ENDPOINT_URL'] = os.getenv('IBM_ENDPOINT_URL')
+app.config['MONGODB_URI'] = os.getenv('MONGODB_URI')
 
 Session(app)
 socketio = SocketIO(app, cors_allowed_origins="*") 
@@ -61,7 +63,7 @@ if not app.config['JWT_ACCESS_TOKEN_EXPIRES']:
     raise ValueError("No JWT access token expiration time set")
 
 CORS(app, resources={r"/*": {"origins": "https://localhost:8080"}}, supports_credentials=True)
-client = MongoClient("mongodb+srv://wombat:Glc4GncM@womcluster.vdiu8vi.mongodb.net/")
+client = MongoClient(app.config['MONGODB_URI'])
 db = client.get_database('mathQuizDatabase')
 rate_limiting = db.get_collection('rate_limiting')
 
@@ -79,6 +81,22 @@ limiter = Limiter(
     storage_uri="redis://localhost:6379",
     default_limits_exempt_when=lambda: False
 )
+
+try:
+    cos = ibm_boto3.resource('s3',
+        ibm_api_key_id=app.config['IBM_API_KEY'],
+        ibm_service_instance_id=app.config['IBM_SERVICE_INSTANCE_ID'],
+        ibm_auth_endpoint=app.config['IBM_AUTH_URL'],
+        config=Config(signature_version='oauth'),
+        endpoint_url=app.config['IBM_ENDPOINT_URL']
+    )
+
+    # Perform a simple operation to check the connection, like listing buckets
+    buckets = list(cos.buckets.all())
+    logging.info("Successfully connected to IBM Cloud Object Storage. Buckets available: {}".format([bucket.name for bucket in buckets]))
+
+except Exception as e:
+    logging.error("Failed to connect to IBM Cloud Object Storage: {}".format(e))
 
 from app.routes import ai_socket_events, account_routes, login_routes, data_routes, pdf_routes, util_routes, ai_socket_events
 app.register_blueprint(account_routes.account_routes_bp)
