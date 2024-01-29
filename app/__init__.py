@@ -11,7 +11,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from redis import Redis
 from flask_socketio import SocketIO
-from .routes.ai_socket_events import setup_socket_events, client
 import ibm_boto3
 from ibm_botocore.client import Config
 
@@ -53,7 +52,6 @@ app.config['MONGODB_URI'] = os.getenv('MONGODB_URI')
 
 Session(app)
 socketio = SocketIO(app, cors_allowed_origins="*") 
-setup_socket_events(socketio)  # Setup SocketIO events
 
 if not app.secret_key:
     raise ValueError("No secret key set for Flask application")
@@ -105,3 +103,6 @@ app.register_blueprint(data_routes.data_routes_bp)
 app.register_blueprint(pdf_routes.pdf_routes_bp)
 app.register_blueprint(util_routes.util_routes_bp)
 app.register_blueprint(ai_socket_events.ai_routes_bp)
+
+from .routes.ai_socket_events import setup_socket_events
+setup_socket_events(socketio)
