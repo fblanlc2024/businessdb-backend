@@ -25,10 +25,11 @@ def create_account():
 def update_account():
     data = request.json
     username = data['username']
+    password = data['password'] 
     new_username = data.get('new_username')
     new_password = data.get('new_password')
 
-    return NativeAuth.update_account(username, new_username, new_password)
+    return NativeAuth.update_account(username, password, new_username, new_password)
 
 # Delete
 @account_routes_bp.route('/account', methods=['DELETE'])

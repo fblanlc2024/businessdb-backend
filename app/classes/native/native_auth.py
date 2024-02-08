@@ -45,33 +45,48 @@ class NativeAuth:
 
         return jsonify({'message': 'Account created successfully'}), 201
     
-    def update_account(username, new_username, new_password):
-
-        # Google users cannot modify their accounts
+    def update_account(username, password, new_username, new_password):
         if google_accounts_collection.find_one({'account_name': username}):
             return jsonify({'message': 'Updates not allowed for users logged in with Google'}), 403
 
         account = accounts_collection.find_one({'username': username})
-        if not account:
-            return jsonify({'message': 'Account not found'}), 404
 
         updates = {}
         if new_username:
             updates['username'] = new_username
+
         if new_password:
-            hashed_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt(15))
-            updates['password_hash'] = hashed_pw
+            if not bcrypt.checkpw(password.encode('utf-8'), account['password_hash']):
+                return jsonify({'message': 'This is not the current password for this account'}), 403
+            
+            new_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt(15))
+
+            if bcrypt.checkpw(new_password.encode('utf-8'), account['password_hash']):
+                return jsonify({'message': 'Please enter a new password'}), 400
+
+            updates['password_hash'] = new_pw
 
         accounts_collection.update_one({'username': username}, {'$set': updates})
         return jsonify({'message': 'Account updated successfully'}), 200
+    
     def delete_account(username):
-        # users cannot delete their Google accounts
+        try:
+            verify_jwt_in_request()
+            current_user = get_jwt_identity()
+        except Exception as jwt_error:
+            current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+            # Fallback to OAuth token
+            oauth_token = request.cookies.get('access_token_cookie')
+            current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+            if oauth_token:
+                current_user = oauth_token
+            else:
+                current_app.logger.error("User not found")
+                return jsonify({"error": "User not found"}), 401
+
         if google_accounts_collection.find_one({'account_name': username}):
             return jsonify({'message': 'Deletion not allowed for users logged in with Google'}), 403
-
-        result = accounts_collection.delete_one({'username': username})
-        if result.deleted_count == 0:
-            return jsonify({'message': 'Account not found'}), 404
         return jsonify({'message': 'Account deleted successfully'}), 200
     
     def reset_password(username, new_password):

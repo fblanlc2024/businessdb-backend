@@ -43,13 +43,30 @@ def admin_status_check():
 def is_user_admin(identifier, accounts_collection, google_accounts_collection):
     current_app.logger.info(f"Checking admin status for identifier: {identifier}")
 
-    # Check for the user in the native accounts collection by username
-    user_document = accounts_collection.find_one({"username": identifier})
+    # Convert the identifier to ObjectId
+    try:
+        object_id = ObjectId(identifier)
+    except:
+        object_id = None
+
+    # Check for the user in the native accounts collection by username, user_id, or _id
+    user_document = accounts_collection.find_one({
+        "$or": [
+            {"username": identifier},
+            {"_id": object_id}
+        ]
+    })
     if user_document:
         return user_document.get("isAdmin", False)
 
-    # If not found, check in the Google accounts collection by access token
-    user_document = google_accounts_collection.find_one({"access_token": identifier})
+    # If not found, check in the Google accounts collection by access token, user_id, or _id
+    user_document = google_accounts_collection.find_one({
+        "$or": [
+            {"access_token": identifier},
+            {"user_id": identifier},
+            {"_id": object_id}
+        ]
+    })
     if user_document:
         return user_document.get("isAdmin", False)
 
