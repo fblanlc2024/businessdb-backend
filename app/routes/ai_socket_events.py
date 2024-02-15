@@ -3,6 +3,7 @@ from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 from flask_socketio import emit
 from openai import OpenAI
 import base64, subprocess, io, base64, httpx, time, uuid
+from io import BytesIO
 from ..models.thread import Thread
 from ..classes.business.data_handling import DataHandler
 from ..classes.email.email import Email
@@ -15,7 +16,6 @@ client = OpenAI()
 ai_routes_bp = Blueprint('ai_routes', __name__)
 
 audio_buffer = io.BytesIO()
-assistant_id = 'asst_chhg0NIxpNlVi2NS9H4I3LMI'
 threads_collection = db.threads
 accounts_collection = db.accounts
 google_accounts_collection = db.google_accounts
@@ -28,7 +28,23 @@ def setup_socket_events(socketio):
         user_input = data['message']
         current_app.logger.info(f"Received user input from thread ID {thread_id}: {user_input}")
 
-        response_data = get_response_from_openai(user_id, user_input, assistant_id, thread_id)
+        file_ids = []
+        if 'files' in data and data['files']:
+            for file_info in data['files']:
+                file_content = base64.b64decode(file_info['content'])
+                # current_app.logger.info(f"file content: {file_content}")
+                file_stream = BytesIO(file_content)
+                file_stream.name = file_info['name']
+                file_response = client.files.create(
+                    file=file_stream,
+                    purpose='assistants'
+                )
+                current_app.logger.info(f"file response from openai: {file_response}")
+                file_ids.append(file_response.id)
+                current_app.logger.info(f"file id response from openai: {file_response.id}")
+
+        assistant_id = current_app.config['ASSISTANT_ID']
+        response_data = get_response_from_openai(user_id, user_input, assistant_id, file_ids, thread_id)
 
         response_text = response_data.get('message') if response_data.get('message') else "No response from assistant."
         thread_id = response_data.get('thread_id')
@@ -117,9 +133,7 @@ def get_user_threads(user_id):
         else:
             current_app.logger.error("User not authenticated")
             return jsonify({"error": "User not authenticated"}), 401
-
-    # Check if the user is an admin
-    is_admin = is_user_admin(current_user, accounts_collection, google_accounts_collection)
+        
     check_admin_status(current_user)
 
     try:
@@ -137,8 +151,9 @@ def get_user_threads(user_id):
         current_app.logger.info(f"THREADS_INFO: {threads_info}")
         return jsonify(threads_info), 200
     except Exception as e:
-        current_app.logger.error(f"Error fetching threads for user {user_id}: {e}")
-        return jsonify({'error': 'Unable to fetch threads'}), 500
+        error_message = f"Error fetching threads for user {user_id}: {e}"
+        current_app.logger.error(error_message)
+        return jsonify({'error': error_message}), 500
 
 @ai_routes_bp.route('/load-messages/<thread_id>', methods=['GET'])
 def load_message(thread_id):
@@ -200,10 +215,11 @@ def process_with_whisper(audio_buffer):
 
 def process_with_gpt(transcription):
     try:
+        system_prompt = current_app.config['VOICE_ASSISTANT_PROMPT']
         completion = client.chat.completions.create(
             model="gpt-3.5-turbo-1106",
             messages=[
-                {"role": "system", "content": "You are a friendly assistant helping with my business application."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": transcription}
             ],
             stream=True,
@@ -256,7 +272,7 @@ def process_with_tts(text):
         }
         data = {
             "model": "tts-1",
-            "voice": "shimmer",
+            "voice": "nova",
             "input": text
         }
 
@@ -269,8 +285,9 @@ def process_with_tts(text):
     except Exception as e:
         current_app.logger.error(f"Error in TTS streaming: {e}")
 
-def create_or_retrieve_thread(user_id, message, thread_id=None):
+def create_or_retrieve_thread(user_id, message, file_ids, thread_id=None):
     current_app.logger.info(f"Creating or retrieving thread for User ID: {user_id}, Thread ID: {thread_id}")
+    current_app.logger.info(f"file ids in create or retrieve thread: {file_ids}")
 
     # Check if the provided thread_id is an existing one and not a temporary ID
     if thread_id and not thread_id.startswith('temp_'):
@@ -279,12 +296,19 @@ def create_or_retrieve_thread(user_id, message, thread_id=None):
         if existing_thread:
             current_app.logger.info(f"Existing thread found: {thread_id}")
             try:
+                # Conditionally add file_ids to the message creation
+                message_params = {
+                    "thread_id": thread_id,
+                    "role": "user",
+                    "content": message
+                }
+                if file_ids:  # Check if file_ids is not None or empty
+                    message_params["file_ids"] = file_ids
+                    current_app.logger.info(f"message file id param: {file_ids}")
+                
                 # Add the new message to the existing thread
-                response = client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=message
-                )
+                response = client.beta.threads.messages.create(**message_params)
+                current_app.logger.info(f"response from openai with file?? {response}")
                 current_app.logger.info(f"New message added to existing thread: {thread_id}")
                 return thread_id, existing_title
             except Exception as e:
@@ -293,17 +317,25 @@ def create_or_retrieve_thread(user_id, message, thread_id=None):
         else:
             current_app.logger.info(f"No existing thread found with ID: {thread_id}")
 
-    # Create a new thread if no existing thread found or thread_id is 'temp_'
+    # Prepare title and metadata for new thread creation
     title = create_title(message)
     metadata = {"uuid": str(uuid.uuid4()), "title": title}
+
+    # Conditionally include file_ids in the message for new thread creation
+    messages_content = {"role": "user", "content": message}
+    if file_ids:  # Check if file_ids is not None or empty
+        messages_content["file_ids"] = file_ids
+
     try:
+        # Create a new thread, conditionally including file_ids
         message_thread = client.beta.threads.create(
-            messages=[{"role": "user", "content": message}],
+            messages=[messages_content],
             metadata=metadata
         )
         new_thread_id = message_thread.id
         current_app.logger.info(f"New thread created with ID: {new_thread_id}")
 
+        # Add the newly created thread to the database
         new_thread = Thread()
         new_thread.add_thread(new_thread_id, user_id, message, metadata)
         threads_collection.insert_one(new_thread.to_dict())
@@ -320,7 +352,7 @@ def create_run(thread_id, assistant_id):
 def poll_for_run_status(thread_id, run_id, user_id):
     tool_call_id = None
     function_output = None
-    arguments_section = None  # Initialize arguments_section variable
+    arguments_section = None
 
     while True:
         run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
@@ -389,12 +421,15 @@ def poll_for_run_status(thread_id, run_id, user_id):
 
         else:
             current_app.logger.info(f"Run status: {run.status}. Polling again in 3 seconds.")
+            steps = client.beta.threads.runs.steps.list(run_id=run_id, thread_id=thread_id)
+            for step in steps.data:
+                current_app.logger.info(f"step (check for code interpreter!) {step}")
             time.sleep(3)
 
     return run, tool_call_id, function_output, arguments_section
 
-def get_response_from_openai(user_id, user_input, assistant_id, thread_id=None):
-    thread_id, title = create_or_retrieve_thread(user_id, user_input, thread_id)
+def get_response_from_openai(user_id, user_input, assistant_id, file_ids, thread_id=None):
+    thread_id, title = create_or_retrieve_thread(user_id, user_input, file_ids, thread_id)
     current_app.logger.info(f"Using thread ID: {thread_id} for response retrieval")
 
     run = create_run(thread_id, assistant_id)

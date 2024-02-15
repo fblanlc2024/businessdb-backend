@@ -164,17 +164,26 @@ class NativeAuth:
         if bcrypt.checkpw(password.encode('utf-8'), account['password_hash']):
             access_token = create_access_token(identity=username)
             
+            now = datetime.utcnow()
             existing_refresh_token = refresh_tokens_collection.find_one({'userId': username})
-            if existing_refresh_token:
+            if existing_refresh_token and existing_refresh_token['expiresAt'] > now:
                 refresh_token = existing_refresh_token['token']
             else:
                 refresh_token = create_refresh_token(identity=username)
-                refresh_tokens_collection.insert_one({
-                    "token": refresh_token,
-                    "userId": username,
-                    "expiresAt": datetime.utcnow() + timedelta(days=30)
-                })
-                logging.info(f"Created new refresh token for username: {username}")
+                refresh_tokens_collection.update_one(
+                    {'userId': username},
+                    {
+                        '$set': {
+                            "token": refresh_token,
+                            "expiresAt": now + timedelta(days=30)
+                        },
+                        '$setOnInsert': {
+                            "userId": username
+                        }
+                    },
+                    upsert=True
+                )
+                logging.info(f"Refresh token updated or created for username: {username}")
 
             access_csrf = get_csrf_token(access_token)
             refresh_csrf = get_csrf_token(refresh_token)
@@ -210,18 +219,9 @@ class NativeAuth:
                 current_app.logger.error("Invalid CSRF token.")
                 return jsonify({'message': 'Invalid CSRF token'}), 403
 
-            account = accounts_collection.find_one({'username': current_user})
-
             # Extract the old refresh token from the cookie
             old_refresh_token = request.cookies.get('refresh_token_cookie')
-            token_data = refresh_tokens_collection.find_one({"token": old_refresh_token})
 
-            if token_data:
-                current_app.logger.info(f"Refresh token data: {token_data}")
-            else:
-                current_app.logger.error("Invalid or expired refresh token used.")
-
-                return jsonify({'message': 'Invalid refresh token'}), 401
             if not old_refresh_token:
                 return jsonify({'message': 'Refresh token missing'}), 401
 
@@ -253,8 +253,6 @@ class NativeAuth:
                 }
             }
 
-            # current_app.logger.info(f"[Token Refresh] - Response Data: {response_data}")
-
             response = make_response(jsonify(response_data))
 
             access_expiration_time = timedelta(hours=1)
@@ -271,10 +269,10 @@ class NativeAuth:
             # Check if the exception is due to token expiration
             if 'Token has expired' in str(e):
                 current_app.logger.error("User token has expired.")
+                return jsonify({'message': 'Token has expired'}), 401
             else:
                 current_app.logger.error(f"JWT Error in /token_refresh: {e}")
-
-            return jsonify({'message': str(e)}), 401
+                return jsonify({'message': str(e)}), 401
         
     @staticmethod    
     def calculate_remaining_attempts(ip, username):
