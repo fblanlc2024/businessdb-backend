@@ -20,6 +20,7 @@ dotenv.load_dotenv(dotenv_path)
 
 logging.basicConfig(level=logging.DEBUG)
 
+# Builds application and configures environmental variables.
 app = Flask(__name__)
 jwt = JWTManager(app)
 
@@ -53,6 +54,7 @@ app.config['ASSISTANT_ID'] = os.getenv('ASSISTANT_ID')
 app.config['SENDING_EMAIL'] = os.getenv('SENDING_EMAIL')
 app.config['SENDING_EMAIL_PASSWORD'] = os.getenv('SENDING_EMAIL_PASSWORD')
 app.config['RECEIVING_EMAIL'] = os.getenv('RECEIVING_EMAIL')
+app.config['ELEVENLABS_API_KEY'] = os.getenv('ELEVENLABS_API_KEY')
 app.config['VOICE_ASSISTANT_PROMPT'] = os.getenv('VOICE_ASSISTANT_PROMPT')
 
 Session(app)
@@ -65,7 +67,7 @@ if not app.config['JWT_SECRET_KEY']:
 if not app.config['JWT_ACCESS_TOKEN_EXPIRES']:
     raise ValueError("No JWT access token expiration time set")
 
-CORS(app, resources={r"/*": {"origins": "https://localhost:8080"}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": ["https://localhost:8080", "https://fbla-project-23e7b.web.app"]}}, supports_credentials=True)
 client = MongoClient(app.config['MONGODB_URI'])
 db = client.get_database('mathQuizDatabase')
 rate_limiting = db.get_collection('rate_limiting')
@@ -73,7 +75,6 @@ rate_limiting = db.get_collection('rate_limiting')
 redis_client = Redis(host='localhost', port=6379, db=0)
 
 def exclude_options():
-    # Exclude OPTIONS requests from rate limiting
     if request.method == 'OPTIONS':
         return 'exclude'
     return get_remote_address()

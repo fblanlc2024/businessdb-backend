@@ -70,23 +70,9 @@ class NativeAuth:
         return jsonify({'message': 'Account updated successfully'}), 200
     
     def delete_account(username):
-        try:
-            verify_jwt_in_request()
-            current_user = get_jwt_identity()
-        except Exception as jwt_error:
-            current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
-
-            # Fallback to OAuth token
-            oauth_token = request.cookies.get('access_token_cookie')
-            current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
-            if oauth_token:
-                current_user = oauth_token
-            else:
-                current_app.logger.error("User not found")
-                return jsonify({"error": "User not found"}), 401
-
         if google_accounts_collection.find_one({'account_name': username}):
             return jsonify({'message': 'Deletion not allowed for users logged in with Google'}), 403
+        accounts_collection.delete_one({'username': username})
         return jsonify({'message': 'Account deleted successfully'}), 200
     
     def reset_password(username, new_password):
@@ -104,12 +90,12 @@ class NativeAuth:
         accounts_collection.update_one({'username': username}, {'$set': {'password_hash': hashed_pw}})
         return jsonify({'message': 'Password updated successfully'}), 200
     
+    # Checks credentials for certain routes
     def protected(current_user):
         csrf_token = request.headers.get('X-CSRF-TOKEN')
         current_app.logger.info(f"CSRF Token: {csrf_token}")
         
         try:
-            # Check for native account
             account = accounts_collection.find_one({'username': current_user})
             if account:
                 user_id = str(account['_id'])
@@ -117,7 +103,6 @@ class NativeAuth:
             else:
                 current_app.logger.info(f"[Protected Endpoint] - Native account not found for username: {current_user}. Trying with OAuth...")
 
-                # Fallback to OAuth token
                 oauth_token = request.cookies.get('access_token_cookie')
                 if oauth_token:
                     user_document = google_accounts_collection.find_one({"access_token": oauth_token})
@@ -137,6 +122,7 @@ class NativeAuth:
             current_app.logger.error(f"Request cookies at the time of error: {request.cookies}")
             return jsonify({'message': 'Authentication failed'}), 500
         
+    # Token login that assigns access and refresh tokens as well as their CSRF counterparts
     def token_login(client_ip, username, password, key, expiry_key):
 
         logging.info(f"Login attempt for username: {username} from IP: {client_ip}")
@@ -150,7 +136,6 @@ class NativeAuth:
             redis_client.expire(key, LOGIN_ATTEMPT_WINDOW)
 
             if attempts >= MAX_LOGIN_ATTEMPTS:
-                # Check if the expiry timestamp is already set for this username
                 if not redis_client.exists(expiry_key):
                     expiry_timestamp = datetime.utcnow() + timedelta(minutes=15)
                     redis_client.set(expiry_key, expiry_timestamp.strftime('%Y-%m-%d %H:%M:%S'), ex=900)
@@ -209,6 +194,7 @@ class NativeAuth:
             logging.info(f"User {username} logged in successfully.")
             return response
 
+    # Rolling refresh token system that replaces old refresh token with new one inside MongoDB. Each refresh token is only used once.
     def refresh_token(received_csrf_token, stored_csrf_token, current_user):
         try:
             if not received_csrf_token:
@@ -219,32 +205,26 @@ class NativeAuth:
                 current_app.logger.error("Invalid CSRF token.")
                 return jsonify({'message': 'Invalid CSRF token'}), 403
 
-            # Extract the old refresh token from the cookie
             old_refresh_token = request.cookies.get('refresh_token_cookie')
 
             if not old_refresh_token:
                 return jsonify({'message': 'Refresh token missing'}), 401
 
-            # Validate the old refresh token
             token_data = refresh_tokens_collection.find_one({"token": old_refresh_token})
             if not token_data:
                 return jsonify({'message': 'Invalid refresh token'}), 401
 
-            # Generate new tokens
             new_access_token = create_access_token(identity=current_user)
             new_refresh_token = create_refresh_token(identity=current_user)
 
-            # Replace the old refresh token in the database
             refresh_tokens_collection.find_one_and_replace(
                 {"token": old_refresh_token},
                 {"token": new_refresh_token, "userId": current_user, "expiresAt": datetime.utcnow() + timedelta(days=30)}
             )
 
-            # Generate new CSRF tokens for the new access and refresh tokens
             new_access_csrf = get_csrf_token(new_access_token)
             new_refresh_csrf = get_csrf_token(new_refresh_token)
 
-            # Create response with new tokens in cookies and CSRF tokens in the response body
             response_data = {
                 'message': 'Token refreshed successfully',
                 'csrf_tokens': {
@@ -266,7 +246,6 @@ class NativeAuth:
             return response
 
         except JWTExtendedException as e:
-            # Check if the exception is due to token expiration
             if 'Token has expired' in str(e):
                 current_app.logger.error("User token has expired.")
                 return jsonify({'message': 'Token has expired'}), 401
@@ -285,6 +264,7 @@ class NativeAuth:
         attempts_left = MAX_LOGIN_ATTEMPTS - int(attempts)
         return max(attempts_left, 0)
 
+    # 15 minute timeout for 5 incorrect attempts, 1 hour timeout for general rate limiting
     @staticmethod
     def calculate_remaining_minutes(username):
         try:

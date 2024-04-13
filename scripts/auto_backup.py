@@ -9,10 +9,8 @@ from dotenv import load_dotenv
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Move up to the parent directory (root of the project)
 project_root = os.path.dirname(current_script_dir)
 
-# Path to the .env file in the app directory
 dotenv_path = os.path.join(project_root, 'app', 'important_variables.env')
 logging.info(f"Loading environment variables from: {dotenv_path}")
 
@@ -27,6 +25,8 @@ else:
 
 logging.basicConfig(level=logging.INFO)
 
+# Automated script to loop through all of the collections in MongoDB and save them to JSON files via a BytesIO stream. Then uses IBM's cos SDK to write to an IBM Cloud Bucket.
+# This file was containerized with Docker and uploaded to IBM as a containerized Kubernetes job.
 def backup_database(db, bucket):
     try:
         for collection_name in db.list_collection_names():
@@ -45,6 +45,7 @@ def backup_database(db, bucket):
         logging.error(f"Database backup failed: {str(e)}")
         return False
 
+# Docker ran this main method.
 def main():
     client = MongoClient(os.getenv('MONGODB_URI'))
     db = client.get_database('mathQuizDatabase')
@@ -68,7 +69,6 @@ def main():
         logging.error(f"Failed to connect to IBM Cloud Object Storage: {str(e)}")
         return
 
-    # Run backup
     backup_database(db, fbla_bucket)
 
 if __name__ == "__main__":

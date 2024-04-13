@@ -21,6 +21,7 @@ accounts_collection = db.accounts
 google_accounts_collection = db.google_accounts
 
 def setup_socket_events(socketio):
+    # Incoming assistant request - checking if there are files and processing the request to call the appropriate chain of methods
     @socketio.on('assistant-request')
     def handle_assistant_request(data):
         user_id = data['user_id']
@@ -32,7 +33,6 @@ def setup_socket_events(socketio):
         if 'files' in data and data['files']:
             for file_info in data['files']:
                 file_content = base64.b64decode(file_info['content'])
-                # current_app.logger.info(f"file content: {file_content}")
                 file_stream = BytesIO(file_content)
                 file_stream.name = file_info['name']
                 file_response = client.files.create(
@@ -41,7 +41,8 @@ def setup_socket_events(socketio):
                 )
                 current_app.logger.info(f"file response from openai: {file_response}")
                 file_ids.append(file_response.id)
-                current_app.logger.info(f"file id response from openai: {file_response.id}")
+                current_app.logger.info(f"file id that was transferred in: {file_response.id}")
+                current_app.logger.info(f"file ids repo: {file_ids}")
 
         assistant_id = current_app.config['ASSISTANT_ID']
         response_data = get_response_from_openai(user_id, user_input, assistant_id, file_ids, thread_id)
@@ -59,12 +60,12 @@ def setup_socket_events(socketio):
             )
             current_app.logger.info(f"Database update result: {update_result.modified_count} documents modified")
 
+    # Socket event listener for GPT 3.5
     @socketio.on('text-generator')
     def handle_message(data):
         user_input = data['message']
         system_role = 'You are a friendly assistant providing details about a business application.'
 
-        # Call OpenAI's GPT-3.5 model
         completion = client.chat.completions.create(
         model="gpt-3.5-turbo-1106",
         messages=[
@@ -78,64 +79,42 @@ def setup_socket_events(socketio):
             if chunk.choices[0].delta.content:
                 emit('stream_chunk', {'content': chunk.choices[0].delta.content})
 
-
+    # Incoming audio data is written to a buffer, continuously written to until user hits the stop button
     @socketio.on('audio_data')
     def handle_audio_data(json):
         current_app.logger.info("Received audio data event")
         base64_data = json['data']
         audio_data = base64.b64decode(base64_data.split(',')[1])
 
-        # Append the audio data to the buffer
         audio_buffer.write(audio_data)
         current_app.logger.info(f"Size of received audio data: {len(audio_data)} bytes")
 
-
+    # Ends the audio stream and then converts to a .wav file for the Whisper API to transcribe it
     @socketio.on('end_audio_stream')
     def handle_end_audio_stream():
-        # Reset buffer to the beginning
         audio_buffer.seek(0)
         if len(audio_buffer.getvalue()) == 0:
             print("Error: No data received in buffer")
-            return  # Exit if buffer is empty
+            return
 
         try:
-            # Convert the audio in the buffer to WAV format using FFmpeg
             wav_buffer = convert_to_wav(audio_buffer)
 
             current_app.logger.info(f"Size of audio buffer for Whisper: {len(wav_buffer.getvalue())} bytes")
-            
-            # Process the WAV audio data with Whisper
+
             transcription = process_with_whisper(wav_buffer)
             emit('transcription_result', {'transcript': transcription})
 
-            # Process transcription with GPT-3.5 Turbo
             process_with_gpt(transcription)
         except Exception as e:
             current_app.logger.error(f"Error processing audio data: {e}")
 
-        # Clear the buffer for next use
         audio_buffer.truncate(0)
         audio_buffer.seek(0)
 
+# Gets the user ID for the various threads linked with the respective user ID
 @ai_routes_bp.route('/get-user-threads/<user_id>', methods=['GET'])
 def get_user_threads(user_id):
-    try:
-        verify_jwt_in_request()
-        current_user = get_jwt_identity()
-    except Exception as jwt_error:
-        current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
-
-        # Fallback to OAuth token
-        oauth_token = request.cookies.get('access_token_cookie')
-        current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
-        if oauth_token:
-            current_user = oauth_token
-        else:
-            current_app.logger.error("User not authenticated")
-            return jsonify({"error": "User not authenticated"}), 401
-        
-    check_admin_status(current_user)
-
     try:
         user_threads = threads_collection.find({'user_id': user_id})
 
@@ -155,6 +134,7 @@ def get_user_threads(user_id):
         current_app.logger.error(error_message)
         return jsonify({'error': error_message}), 500
 
+# Loads messages under a certain thread
 @ai_routes_bp.route('/load-messages/<thread_id>', methods=['GET'])
 def load_message(thread_id):
     try:
@@ -167,17 +147,17 @@ def load_message(thread_id):
         current_app.logger.error(f"Error fetching messages for thread ID {thread_id}: {e}")
         return jsonify({'error': 'Unable to fetch messages'}), 500
 
+# Function that the AI can call that automatically adds a business.
 @ai_routes_bp.route('/auto_add_business', methods=['POST'])
 def auto_add_business_route():
     data = request.json
     current_app.logger.info(f"data received: {data}")
     return DataHandler.add_business(data)
 
+# Uses ffmpeg to convert the audio buffer collected from the frontend into a .wav stream
 def convert_to_wav(input_buffer):
-    # Ensure the buffer's read pointer is at the start
     input_buffer.seek(0)
 
-    # Use FFmpeg to convert the audio data to WAV format
     process = subprocess.Popen(
         ['ffmpeg', '-i', '-', '-ac', '1', '-ar', '16000', '-f', 'wav', '-'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -188,15 +168,12 @@ def convert_to_wav(input_buffer):
     if process.returncode != 0:
         raise ValueError(f"FFmpeg error: {error.decode()}")
 
-    # Return the wav data as a BytesIO object
     return io.BytesIO(wav_data)
 
-
+# Uses OpenAI's Whisper API to transcribe the .wav file
 def process_with_whisper(audio_buffer):
-    # Ensure the buffer's read pointer is at the start
     audio_buffer.seek(0)
 
-    # Naming the BytesIO object as required
     named_audio_buffer = io.BytesIO(audio_buffer.getvalue())
     named_audio_buffer.name = 'audio.wav'
 
@@ -213,6 +190,7 @@ def process_with_whisper(audio_buffer):
         current_app.logger.error(f"Error in Whisper transcription: {e}")
         return ""
 
+# Text is passed into a faster GPT 3.5 Turbo version for quicker response time
 def process_with_gpt(transcription):
     try:
         system_prompt = current_app.config['VOICE_ASSISTANT_PROMPT']
@@ -225,19 +203,18 @@ def process_with_gpt(transcription):
             stream=True,
         )
 
-        # Accumulate all response chunks into a single string
         full_response = ""
         for chunk in completion:
             if chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content.strip()
+                full_response += chunk.choices[0].delta.content
 
         if full_response:
-            # Once all chunks are accumulated, process the complete response with TTS
             process_with_tts(full_response)
 
     except Exception as e:
         current_app.logger.error(f"GPT-3.5 Turbo streaming failed: {e}")
 
+# Creates a title for a newly initialized chat
 def create_title(message):
     try:
         completion = client.chat.completions.create(
@@ -246,12 +223,11 @@ def create_title(message):
                 {"role": "system", "content": "Create a 2-4 word title summarizing this user input."},
                 {"role": "user", "content": message}
             ],
-            max_tokens=10
+            max_tokens=8
         )
 
         current_app.logger.info(f"the title response: {completion}")
 
-        # Extracting the title from the completion response
         if completion.choices and completion.choices[0].message and completion.choices[0].message.content:
             title = completion.choices[0].message.content.strip()
             return title
@@ -261,73 +237,81 @@ def create_title(message):
         current_app.logger.error(f"GPT-3.5 Turbo streaming failed: {e}")
         return "General Inquiry"
 
+# Uses Elevenlabs API to convert the GPT 3.5's response into an audio stream
 def process_with_tts(text):
-    openai_api_key = current_app.config['OPENAI_API_KEY']
+    xi_api_key = current_app.config['ELEVENLABS_API_KEY']
 
     try:
-        url = "https://api.openai.com/v1/audio/speech"
+        url = "https://api.elevenlabs.io/v1/text-to-speech/pNInz6obpgDQGcFmaJgB"
+
         headers = {
-            "Authorization": f"Bearer {openai_api_key}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": "tts-1",
-            "voice": "nova",
-            "input": text
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": xi_api_key
         }
 
-        with httpx.stream("POST", url, headers=headers, json=data) as response:
-            audio_chunks = [chunk for chunk in response.iter_bytes(chunk_size=4096) if chunk]
-            complete_audio = b''.join(audio_chunks)
-            encoded_audio = base64.b64encode(complete_audio).decode('utf-8')
-            emit('tts_stream_full', {'audio_data': encoded_audio})
+        data = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+
+        response = requests.post(url, json=data, headers=headers)
+        
+        audio_chunks = [chunk for chunk in response.iter_content(chunk_size=4096) if chunk]
+        complete_audio = b''.join(audio_chunks)
+        encoded_audio = base64.b64encode(complete_audio).decode('utf-8')
+        
+        emit('tts_stream_full', {'audio_data': encoded_audio})
 
     except Exception as e:
         current_app.logger.error(f"Error in TTS streaming: {e}")
 
-def create_or_retrieve_thread(user_id, message, file_ids, thread_id=None):
+# Creates a new thread or adds to an existing one, depending on whether a thread_id is passed into the function or not
+def create_or_add_to_thread(user_id, message, file_ids, thread_id=None):
     current_app.logger.info(f"Creating or retrieving thread for User ID: {user_id}, Thread ID: {thread_id}")
     current_app.logger.info(f"file ids in create or retrieve thread: {file_ids}")
 
-    # Check if the provided thread_id is an existing one and not a temporary ID
     if thread_id and not thread_id.startswith('temp_'):
         existing_thread = threads_collection.find_one({'thread_id': thread_id})
         existing_title = existing_thread['metadata']['title'] if existing_thread else None
         if existing_thread:
             current_app.logger.info(f"Existing thread found: {thread_id}")
             try:
-                # Conditionally add file_ids to the message creation
-                message_params = {
-                    "thread_id": thread_id,
-                    "role": "user",
-                    "content": message
-                }
-                if file_ids:  # Check if file_ids is not None or empty
-                    message_params["file_ids"] = file_ids
+                if file_ids:
                     current_app.logger.info(f"message file id param: {file_ids}")
-                
-                # Add the new message to the existing thread
-                response = client.beta.threads.messages.create(**message_params)
+                    response = client.beta.threads.messages.create(
+                        thread_id=thread_id,
+                        role="user",
+                        content=message,
+                        file_ids=file_ids
+                    )
+                else:
+                    response = client.beta.threads.messages.create(
+                        thread_id=thread_id,
+                        role="user",
+                        content=message
+                    )
                 current_app.logger.info(f"response from openai with file?? {response}")
                 current_app.logger.info(f"New message added to existing thread: {thread_id}")
                 return thread_id, existing_title
             except Exception as e:
                 current_app.logger.error(f"Error adding message to existing thread: {e}")
-                return None  # Return None if error occurs
+                return None
         else:
             current_app.logger.info(f"No existing thread found with ID: {thread_id}")
 
-    # Prepare title and metadata for new thread creation
     title = create_title(message)
     metadata = {"uuid": str(uuid.uuid4()), "title": title}
 
-    # Conditionally include file_ids in the message for new thread creation
     messages_content = {"role": "user", "content": message}
-    if file_ids:  # Check if file_ids is not None or empty
+    if file_ids:
         messages_content["file_ids"] = file_ids
 
     try:
-        # Create a new thread, conditionally including file_ids
         message_thread = client.beta.threads.create(
             messages=[messages_content],
             metadata=metadata
@@ -335,7 +319,6 @@ def create_or_retrieve_thread(user_id, message, file_ids, thread_id=None):
         new_thread_id = message_thread.id
         current_app.logger.info(f"New thread created with ID: {new_thread_id}")
 
-        # Add the newly created thread to the database
         new_thread = Thread()
         new_thread.add_thread(new_thread_id, user_id, message, metadata)
         threads_collection.insert_one(new_thread.to_dict())
@@ -349,6 +332,7 @@ def create_run(thread_id, assistant_id):
     run = client.beta.threads.runs.create(thread_id=thread_id, assistant_id=assistant_id)
     return run
 
+# Periodically polls (every 3 seconds) for the run status. If it requires action, then it calls the respective function and submits the tool call to garner a response from the assistant.
 def poll_for_run_status(thread_id, run_id, user_id):
     tool_call_id = None
     function_output = None
@@ -363,18 +347,15 @@ def poll_for_run_status(thread_id, run_id, user_id):
         elif run.status == 'requires_action':
             current_app.logger.info(f"Action required for Run ID: {run_id}")
 
-            # Extracting tool_call_id when action is required
             if run.required_action and run.required_action.submit_tool_outputs:
                 tool_calls = run.required_action.submit_tool_outputs.tool_calls
                 if tool_calls and len(tool_calls) > 0:
                     tool_call_id = tool_calls[0].id
                     current_app.logger.info(f"Extracted tool_call_id: {tool_call_id}")
-
-                    # Extract the "arguments" section from the function's arguments
                     function_arguments = tool_calls[0].function.arguments
+
                     if function_arguments:
                         try:
-                            # Replace escape characters and convert to valid JSON
                             formatted_arguments = re.sub(r'\\n', '\\n', function_arguments)
                             arguments_section = json.loads(formatted_arguments)
 
@@ -407,13 +388,7 @@ def poll_for_run_status(thread_id, run_id, user_id):
                         except json.JSONDecodeError as e:
                             current_app.logger.error(f"Error decoding arguments section: {e}")
                             submit_tool_output(thread_id, run_id, tool_call_id, False)
-                    
-                    # Retrieve the run steps to get the function output
-                    steps = client.beta.threads.runs.steps.list(run_id=run_id, thread_id=thread_id)
-                    for step in steps.data:
-                        if step.type == 'tool_calls' and step.status == 'completed':
-                            function_output = step.step_details.tool_calls[0].function.output
-                            current_app.logger.debug(f"Function output: {function_output}")
+
                     break
             else:
                 current_app.logger.error("Unable to extract tool_call_id")
@@ -428,8 +403,9 @@ def poll_for_run_status(thread_id, run_id, user_id):
 
     return run, tool_call_id, function_output, arguments_section
 
+# Main function to chain the series of assistant thread calls. Returns an updated list of messages and title if applicable.
 def get_response_from_openai(user_id, user_input, assistant_id, file_ids, thread_id=None):
-    thread_id, title = create_or_retrieve_thread(user_id, user_input, file_ids, thread_id)
+    thread_id, title = create_or_add_to_thread(user_id, user_input, file_ids, thread_id)
     current_app.logger.info(f"Using thread ID: {thread_id} for response retrieval")
 
     run = create_run(thread_id, assistant_id)
@@ -462,7 +438,6 @@ def get_response_from_openai(user_id, user_input, assistant_id, file_ids, thread
 
 def extract_messages(data):
     extracted_messages = []
-    # Convert the data to a list for reversing
     message_list = list(data)
 
     for message in reversed(message_list):
@@ -479,12 +454,12 @@ def extract_messages(data):
 
     return extracted_messages
 
+# Function that the AI calls to automatically add a singular business.
 def auto_add_business(business_data, user_id):
     current_app.logger.info(f"Received business data: {business_data} and user_id: {user_id}")
     admin_status = check_admin_status(user_id)
     current_app.logger.info(f"Admin status at the time of requesting the add_business endpoint: {admin_status}")
     if not admin_status:
-        # Admin status check failed
         return {"error": "User not authenticated or not an admin"}, 403
 
     try:
@@ -498,7 +473,8 @@ def auto_add_business(business_data, user_id):
     except Exception as e:
         current_app.logger.error(f"Error in adding business: {e}")
         return {"error": str(e)}, 500
-    
+
+# Function that the AI calls to automatically add multiple businesses.
 def auto_add_multiple_businesses(businesses_data, user_id):
     current_app.logger.info(f"Received businesses data for user_id: {user_id}")
     current_app.logger.info(f"received data in multiple businesses method: {businesses_data}")
@@ -518,34 +494,32 @@ def auto_add_multiple_businesses(businesses_data, user_id):
         current_app.logger.error(f"Error in adding multiple businesses: {e}")
         return jsonify({"error": str(e)}), 500
 
+# Checks admin status for authentication to add multiple businesses via a Redis memory cache server
 def check_admin_status(user_id):
     current_app.logger.info(f"received user_id for admin status checking: {user_id}")
     cache_key = f"admin_status:{user_id}"
-    is_admin_bytes = redis_client.get(cache_key)  # Attempt to get the cached value
+    is_admin_bytes = redis_client.get(cache_key)
 
     if is_admin_bytes is None:
-        # If not cached, determine admin status and cache the result
         is_admin = is_user_admin(user_id, accounts_collection, google_accounts_collection)
         current_app.logger.info(f"{user_id} admin's status is.... {is_admin}")
-        # Cache the admin status as a string ('True' or 'False')
         redis_client.setex(cache_key, 3600, 'True' if is_admin else 'False')
     else:
-        # If cached, decode the bytes to string and convert to boolean
         is_admin_str = is_admin_bytes.decode('utf-8')
         is_admin = is_admin_str == 'True'
     
     current_app.logger.info(f"{user_id} admin status in check_admin_status: {is_admin}")
     return is_admin
-
+# Submits tool output and broadcasts to user whether there was a success or not.
 def submit_tool_output(thread_id, run_id, tool_call_id, output):
     current_app.logger.info(f"Submitting tool output - Thread ID: {thread_id}, Run ID: {run_id}, Tool Call ID: {tool_call_id}, Output: {output}")
     try:
-        # Submitting the tool output back to OpenAI
         run = client.beta.threads.runs.submit_tool_outputs(
             thread_id=thread_id,
             run_id=run_id,
             tool_outputs=[{"tool_call_id": tool_call_id, "output": output}]
         )
+        current_app.logger.info(f"new run message: {run}")
         current_app.logger.debug(f"Tool output submitted successfully.")
     except Exception as e:
         current_app.logger.error(f"Error submitting tool output: {e}")
@@ -554,7 +528,7 @@ def send_ai_email(email_info, thread_id):
     from_email = current_app.config['SENDING_EMAIL']
     password = current_app.config['SENDING_EMAIL_PASSWORD']
     to_email = current_app.config['RECEIVING_EMAIL']
-    subject = f"{email_info['username']} reported an issue with your business application!"
+    subject = f"Someone reported an issue with your business application!"
     message_result = fetch_messages(thread_id)
     body = f"Issue Description:\n{email_info['issue_description']}\n\nThread Messages:\n{message_result}"
 
@@ -582,4 +556,3 @@ def fetch_messages(thread_id):
     except Exception as e:
         current_app.logger.info(f"Failed to fetch messages: {e}")
         return "Failed to fetch messages due to an exception."
-

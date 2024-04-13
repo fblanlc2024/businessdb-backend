@@ -34,6 +34,20 @@ def update_account():
 # Delete
 @account_routes_bp.route('/account', methods=['DELETE'])
 def delete_account():
+    try:
+        verify_jwt_in_request()
+        current_user = get_jwt_identity()
+    except Exception as jwt_error:
+        current_app.logger.warning(f"JWT authentication failed: {jwt_error}")
+
+        # Fallback to OAuth token
+        oauth_token = request.cookies.get('access_token_cookie')
+        current_app.logger.info(f"OAuth token from cookie: {oauth_token}")
+        if oauth_token:
+            current_user = oauth_token
+        else:
+            current_app.logger.error("User not found")
+            return jsonify({"error": "User not found"}), 401
     data = request.json
     username = data['username']
 

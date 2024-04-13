@@ -17,11 +17,20 @@ class StaticPDF:
         pass
 
     def create_business_pdf(data, formatted_addresses):
+        """
+            Creates a PDF document containing a business report based on provided data and addresses.
+
+            Args:
+                data (dict): Dictionary containing business data.
+                formatted_addresses (list): List of formatted addresses.
+
+            Returns:
+                bytes: PDF document in bytes format.
+        """
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
         styles = getSampleStyleSheet()
 
-        # Initialize table data with headers
         table_data = []
 
         if isinstance(data, dict):
@@ -38,10 +47,8 @@ class StaticPDF:
             print("Invalid data format: Expected a dictionary")
             return None
 
-        # Define column widths
         colWidths = [doc.width/3.0, doc.width/3.0 * 2]
 
-        # Create the table with style
         table = Table(table_data, colWidths=colWidths)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -58,23 +65,19 @@ class StaticPDF:
         elements += StaticPDF.create_executive_summary(data)
         elements.append(Spacer(1, 12))
 
-        # Check if the business has a logo and add it to the report
         business_logo = data.get('logo_url', None)
-        max_width = 6 * inch  # Example maximum width
-        max_height = 2 * inch  # Example maximum height
+        max_width = 6 * inch
+        max_height = 2 * inch
 
         if business_logo:
             try:
                 logo = Image(business_logo)
 
-                # Calculate aspect ratio and resize
                 aspect = logo.imageWidth / logo.imageHeight
                 if aspect > 1:
-                    # Image is wider than it is tall
                     logo.drawWidth = min(max_width, logo.imageWidth)
                     logo.drawHeight = logo.drawWidth / aspect
                 else:
-                    # Image is taller than it is wide
                     logo.drawHeight = min(max_height, logo.imageHeight)
                     logo.drawWidth = logo.drawHeight * aspect
 
@@ -85,7 +88,6 @@ class StaticPDF:
 
         elements.append(table)
 
-        # Create the address table
         address_table_data = [['Address Number', 'Address Data']]
         for i, address in enumerate(formatted_addresses, 1):
             address_label = f"Address {i}"
@@ -106,16 +108,13 @@ class StaticPDF:
         elements.append(address_table)
         elements.append(Spacer(1, 12))
 
-        # Check if there are available resources
         has_resources = data.get('has_available_resources', False)
         resources = data.get('resources_available', '').split(', ')
 
         if has_resources and resources:
-            # Create and add pie chart
             pie_chart_buffer = StaticPDF.create_random_pie_chart(resources)
             pie_chart_image = Image(pie_chart_buffer)
 
-            # Resize the pie chart image
             pie_chart_width = 4 * inch
             aspect_ratio = pie_chart_image.imageWidth / pie_chart_image.imageHeight
             pie_chart_height = pie_chart_width / aspect_ratio
@@ -130,22 +129,15 @@ class StaticPDF:
             centered_style = ParagraphStyle('centered_style', alignment=1)
             message = "There are no available resources at this time."
             no_resource_message = Paragraph(message, centered_style)
-            
-            # Specify the width and height for the dashed box
+
             box_width = doc.width * 0.5
             box_height = 2 * inch
 
-            # Create the DashedBox flowable with the message inside it
             dashed_box = DashedBox(no_resource_message, box_width, box_height)
-
-            # To center the DashedBox, place it inside a Table.
             centered_table = Table([[dashed_box]], colWidths=[doc.width])
-
-            # Apply a style to the table to center its contents.
             centered_table.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                                                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
 
-            # Add the Table containing the DashedBox to the elements list
             elements.append(Spacer(1, 12))
             elements.append(centered_table)
             elements.append(Spacer(1, 12))
@@ -164,8 +156,7 @@ class StaticPDF:
         if isinstance(data, dict):
             address = data.get('address', {})
             formatted_address = ', '.join([str(address[key]) for key in address if address[key]])
-            
-            # Basic Info
+
             table_data.extend([
                 ['Business ID', data.get('business_id', '')],
                 ['Business Name', data.get('business_name', '')],
@@ -175,7 +166,6 @@ class StaticPDF:
                 ['Contact Info', data.get('contact_info', '')]
             ])
 
-            # Admin-specific Info
             yearly_revenue = data.get('yearly_revenue', 'Not Available')
             employee_count = data.get('employee_count', 'Not Available')
             customer_satisfaction = data.get('customer_satisfaction', 'Not Available')
@@ -188,7 +178,6 @@ class StaticPDF:
                 ['Website Traffic', website_traffic]
             ])
 
-            # Conditional Descriptions
             if yearly_revenue != 'Not Available':
                 revenue_description = "High" if float(yearly_revenue) > 1000000 else "Moderate"
                 table_data.append(['Revenue Description', f"The business has a {revenue_description} revenue stream."])
@@ -200,10 +189,8 @@ class StaticPDF:
             print("Invalid data format: Expected a dictionary")
             return None
 
-        # Define column widths
         colWidths = [doc.width/3.0, doc.width/3.0 * 2]
 
-        # Create the table with style
         table = Table(table_data, colWidths=colWidths)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -215,28 +202,24 @@ class StaticPDF:
             ('GRID', (0, 0), (-1, -1), 1, colors.black)
         ]))
 
-        # Add Table and Additional Text to PDF
         elements = []
         elements.append(Paragraph('Business Report For ' + data.get('business_name', ''), styles['Title']))
         elements += StaticPDF.create_executive_summary(data)
         elements.append(Spacer(1, 12))
 
         business_logo = data.get('logo_url', None)
-        max_width = 6 * inch  # Example maximum width
-        max_height = 2 * inch  # Example maximum height
+        max_width = 6 * inch
+        max_height = 2 * inch
 
         if business_logo:
             try:
                 logo = Image(business_logo)
 
-                # Calculate aspect ratio and resize
                 aspect = logo.imageWidth / logo.imageHeight
                 if aspect > 1:
-                    # Image is wider than it is tall
                     logo.drawWidth = min(max_width, logo.imageWidth)
                     logo.drawHeight = logo.drawWidth / aspect
                 else:
-                    # Image is taller than it is wide
                     logo.drawHeight = min(max_height, logo.imageHeight)
                     logo.drawWidth = logo.drawHeight * aspect
 
@@ -248,7 +231,6 @@ class StaticPDF:
         elements.append(table)
         elements.append(Spacer(1, 12))
 
-        # Create the address table
         address_table_data = [['Address Number', 'Address Data']]
         for i, address in enumerate(formatted_addresses, 1):
             address_label = f"Address {i}"
@@ -268,17 +250,14 @@ class StaticPDF:
         elements.append(address_table)
         elements.append(Spacer(1, 12))
 
-        # Additional Text
         if yearly_revenue != 'Not Available' and float(yearly_revenue) > 5000000:
             elements.append(Paragraph("This business qualifies for our premium partnership program based on its revenue.", styles['Normal']))
         if employee_count != 'Not Available' and int(employee_count) > 50:
             elements.append(Paragraph("The company's employee count suggests a robust operational capacity.", styles['Normal']))
 
-        # Create the graph image and resize it
         revenue_graph_buffer = StaticPDF.create_business_graph('Yearly Revenue', 'Year', 'Revenue (per million $)')
         revenue_graph_image = Image(revenue_graph_buffer)
 
-        # Let's assume you want the image to be 4 inches wide and the height to be scaled proportionally
         graph_image_width = 4 * inch
         aspect_ratio = revenue_graph_image.imageWidth / revenue_graph_image.imageHeight
         graph_image_height = graph_image_width / aspect_ratio
@@ -286,20 +265,16 @@ class StaticPDF:
         revenue_graph_image.drawWidth = graph_image_width
         revenue_graph_image.drawHeight = graph_image_height
 
-        # Add the resized graph image to the elements
         elements.append(revenue_graph_image)
         elements.append(Spacer(1, 12))
 
-        # Check if there are available resources
         has_resources = data.get('has_available_resources', False)
         resources = data.get('resources_available', '').split(', ')
 
         if has_resources and resources:
-            # Create and add pie chart
             pie_chart_buffer = StaticPDF.create_random_pie_chart(resources)
             pie_chart_image = Image(pie_chart_buffer)
 
-            # Resize the pie chart image
             pie_chart_width = 4 * inch
             aspect_ratio = pie_chart_image.imageWidth / pie_chart_image.imageHeight
             pie_chart_height = pie_chart_width / aspect_ratio
@@ -314,27 +289,21 @@ class StaticPDF:
             centered_style = ParagraphStyle('centered_style', alignment=1)
             message = "There are no available resources at this time."
             no_resource_message = Paragraph(message, centered_style)
-            
-            # Specify the width and height for the dashed box
+
             box_width = doc.width * 0.5
             box_height = 2 * inch
 
-            # Create the DashedBox flowable with the message inside it
             dashed_box = DashedBox(no_resource_message, box_width, box_height)
 
-            # To center the DashedBox, place it inside a Table.
             centered_table = Table([[dashed_box]], colWidths=[doc.width])
 
-            # Apply a style to the table to center its contents.
             centered_table.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                                                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
 
-            # Add the Table containing the DashedBox to the elements list
             elements.append(Spacer(1, 12))
             elements.append(centered_table)
             elements.append(Spacer(1, 12))
 
-        # Example usage in your PDF creation:
         trend_line_chart_buffer = StaticPDF.create_trend_line_chart()
         trend_line_chart_image = Image(trend_line_chart_buffer)
         trend_line_chart_image.drawWidth = 4 * inch
@@ -342,7 +311,6 @@ class StaticPDF:
         elements.append(trend_line_chart_image)
         elements.append(Spacer(1, 12))
 
-        # Build the PDF
         doc.build(elements)
         pdf = buffer.getvalue()
         buffer.close()
@@ -350,6 +318,16 @@ class StaticPDF:
 
     @staticmethod
     def create_executive_summary(data):
+        """
+        Creates an admin-level business report PDF based on provided data and addresses.
+
+        Args:
+            data (dict): Dictionary containing business data.
+            formatted_addresses (list): List of formatted addresses.
+
+        Returns:
+            bytes: PDF document in bytes format.
+        """
         styles = getSampleStyleSheet()
         executive_summary = []
 
@@ -361,7 +339,6 @@ class StaticPDF:
         customer_satisfaction = data.get('customer_satisfaction', 0)
         website_traffic = data.get('website_traffic', 0)
 
-        # Revenue Analysis
         if yearly_revenue and int(yearly_revenue) > 1000000000:
             revenue_analysis = "The company has achieved an impressive revenue of over $1 billion, indicating strong market performance."
         elif yearly_revenue:
@@ -370,7 +347,6 @@ class StaticPDF:
             revenue_analysis = "Revenue data is not available."
         executive_summary.append(Paragraph(revenue_analysis, styles['Normal']))
 
-        # Employee Analysis
         if employee_count > 10000:
             employee_analysis = "With a large employee base, the company demonstrates significant operational capabilities."
         elif employee_count > 0:
@@ -379,7 +355,6 @@ class StaticPDF:
             employee_analysis = "Employee count data is not available."
         executive_summary.append(Paragraph(employee_analysis, styles['Normal']))
 
-        # Customer Satisfaction
         if customer_satisfaction >= 4:
             satisfaction_analysis = "High customer satisfaction scores indicate strong customer loyalty and brand value."
         elif customer_satisfaction > 0:
@@ -388,7 +363,6 @@ class StaticPDF:
             satisfaction_analysis = "Customer satisfaction data is not available."
         executive_summary.append(Paragraph(satisfaction_analysis, styles['Normal']))
 
-        # Website Traffic
         if website_traffic > 1000000:
             traffic_analysis = "The substantial website traffic highlights the company's strong online presence and engagement."
         elif website_traffic > 0:
@@ -403,7 +377,6 @@ class StaticPDF:
 
     @staticmethod
     def create_business_graph(title, x_label, y_label, num_years=10, min_value=100, max_value=500, figsize=(6, 4), degree=4):
-        # Generate pseudo data
         data = [random.uniform(min_value, max_value) for _ in range(num_years)]
         years = np.arange(num_years)
         year_labels = [f'20{20+i}' for i in years]
@@ -412,46 +385,38 @@ class StaticPDF:
 
         print(f"PLOT STYLES AVAILABLE: {plt.style.available}")
 
-        # Create bar chart
         bars = ax.bar(years, data, alpha=0.7, label='Revenue')
 
-        # Create trend line
         z = np.polyfit(years, data, degree)
         p = np.poly1d(z)
         plt.plot(years, p(years), "r--", label='Trend')
 
-        # Add data labels on the bars
         for bar in bars:
             yval = bar.get_height()
             plt.text(bar.get_x() + bar.get_width()/2.0, yval, round(yval, 2), va='bottom', ha='center', fontsize='small')
 
-        # Set labels and title
-        ax.set_xlabel(x_label, fontsize='medium')  # x-axis label with adjusted font size
-        ax.set_ylabel(y_label, fontsize='medium')  # y-axis label with adjusted font size
+        ax.set_xlabel(x_label, fontsize='medium')
+        ax.set_ylabel(y_label, fontsize='medium')
         ax.set_xticks(years)
-        ax.set_xticklabels(year_labels, fontsize='small')  # Half the font size
-        ax.set_title(title, fontsize='large')  # Title with adjusted font size
+        ax.set_xticklabels(year_labels, fontsize='small')
+        ax.set_title(title, fontsize='large')
 
-        # Add legend with smaller font size
         ax.legend(fontsize='small')
 
-        # Save to a BytesIO buffer
         buf = BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight')
         buf.seek(0)
-        plt.close(fig)  # Close the figure to free memory
+        plt.close(fig)
 
         return buf
 
     @staticmethod
     def create_random_pie_chart(resources):
-        # Randomly distribute percentages among resources
         percentages = np.random.rand(len(resources))
         percentages /= percentages.sum()
 
-        # Check if they sum up to 1 (or close enough due to floating point arithmetic)
         if not np.isclose(percentages.sum(), 1):
-            return StaticPDF.create_random_pie_chart(resources)  # Retry if not summing up to 1
+            return StaticPDF.create_random_pie_chart(resources)
 
         fig, ax = plt.subplots()
         ax.pie(percentages, labels=resources, autopct='%1.1f%%')
@@ -464,25 +429,22 @@ class StaticPDF:
 
     @staticmethod
     def create_trend_line_chart(hours=24, figsize=(6, 4)):
-        # Generate a range of hours for the x-axis
         x_labels = [f"{i}:00" for i in range(hours)]
-        
-        # Create random data points for the y-axis
-        visitor_counts = np.random.randint(0, 500, size=hours)  # Random visitor counts between 0 and 500
+
+        visitor_counts = np.random.randint(0, 500, size=hours)
 
         plt.figure(figsize=figsize)
-        plt.plot(x_labels, visitor_counts, marker='o', linestyle='-', color='b')  # blue line with circle markers
+        plt.plot(x_labels, visitor_counts, marker='o', linestyle='-', color='b')
         plt.title('Hourly Site Visitors')
         plt.xlabel('Hour of the Day')
         plt.ylabel('Number of Visitors')
-        plt.xticks(rotation=45)  # Rotate x-axis labels for better readability
-        plt.tight_layout()  # Adjust layout to prevent clipping of tick-labels
+        plt.xticks(rotation=45)
+        plt.tight_layout()
         plt.grid(True)
 
-        # Save the plot to a BytesIO buffer
         buffer = BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight')
-        plt.close()  # Close the plot to free up memory
-        buffer.seek(0)  # Move to the beginning of the buffer
+        plt.close()
+        buffer.seek(0)
         
         return buffer

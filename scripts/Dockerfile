@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Command to run on container start
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "fbla-proj-backend:app"]
+CMD [ "python", "./scripts/auto_backup.py" ]

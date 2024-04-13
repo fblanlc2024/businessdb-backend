@@ -8,12 +8,14 @@ class RedisLayer:
         self.MAX_LOGIN_ATTEMPTS = 5
         self.LOGIN_ATTEMPT_WINDOW = 900  # Time in seconds
 
+    # Max 5 login attempts, refreshes after 15 minutes
     def increment_login_attempts(self, client_ip, username):
         key = f"login_attempts:{client_ip}:{username}"
         attempts = self.redis_client.incr(key)
         self.redis_client.expire(key, self.LOGIN_ATTEMPT_WINDOW)
         return attempts
 
+    # see comment above for expiration
     def set_expiry_for_username(self, username):
         expiry_key = f"username_expiry:{username}"
         if not self.redis_client.exists(expiry_key):

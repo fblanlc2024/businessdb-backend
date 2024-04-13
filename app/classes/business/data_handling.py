@@ -32,7 +32,6 @@ class DataHandler:
         return jsonify(business_list)
 
     def get_business_info(business_name, is_admin):
-        # Fields to project for all users
         business_info_fields = {
             "business_id": "$business_id",
             "business_name": "$business_name",
@@ -42,7 +41,6 @@ class DataHandler:
             "contact_info": "$contact_info"
         }
 
-        # Additional fields for admin users
         if is_admin:
             business_info_fields.update({
                 "yearly_revenue": "$yearly_revenue",
@@ -51,6 +49,7 @@ class DataHandler:
                 "website_traffic": "$website_traffic"
             })
 
+        # MongoDB query to get all the addresses under one business
         pipeline = [
             {"$match": {"business_name": business_name}},
             {"$lookup": {
@@ -85,7 +84,7 @@ class DataHandler:
         if not result:
             return jsonify({'error': 'Business not found'}), 404
 
-        # Convert ObjectId to string in the address_info
+        # Converts ObjectId to string in the address information
         for doc in result:
             if 'address_info' in doc and '_id' in doc['address_info']:
                 doc['address_info']['_id'] = str(doc['address_info']['_id'])
@@ -98,6 +97,7 @@ class DataHandler:
         return jsonify(output)
     
     def delete_business_by_id(business_id):
+        # Deletes business and all addresses along with it
         pipeline = [
             {"$match": {"business_id": business_id}},
             {"$lookup": {
@@ -117,31 +117,28 @@ class DataHandler:
             {"$project": {"address_id": "$address_details.address_id"}}
         ]
 
-        # Get all linked address IDs
         linked_address_ids = [
             doc['address_id'] for doc in businesses_collection.aggregate(pipeline)
         ]
 
-        # Delete all linked addresses
         if linked_address_ids:
             addresses_collection.delete_many({"address_id": {"$in": linked_address_ids}})
 
-        # Delete the business document
         business_delete_result = businesses_collection.delete_one({"business_id": business_id})
         if business_delete_result.deleted_count == 0:
             return jsonify({"error": "Business not found or already deleted"}), 404
 
-        # Delete all link documents
         linker_collection.delete_many({"business_id": business_id})
 
         return jsonify({"message": "Business and all associated addresses deleted successfully"}), 200
     
     def add_business(business_data):
         current_app.logger.info(f"received data in refactored add_business method: {business_data}")
-        validation_result = DataHandler.validate_data(business_data)
-        if validation_result is not True:
-            current_app.logger.info(f"the validation result is: {validation_result}")
-            return validation_result
+        validation_result, status_code = DataHandler.validate_data(business_data)
+        current_app.logger.info(f"status code: {status_code}")
+        if status_code != 200:
+            current_app.logger.info(f"the validation result is (error): {validation_result}")
+            return jsonify(validation_result), status_code
         
         current_app.logger.info(f"the validation result is: {validation_result}")
         try:
@@ -150,7 +147,8 @@ class DataHandler:
             return jsonify({'error': f'Missing address component: {e}'}), 400
         except Exception as e:
             return jsonify({'error': str(e)}), 500
-        
+
+    # Batch additions for multiple businesses via forming multiple business documents, each containing one business to add.
     def add_multiple_businesses(businesses_data):
         valid_businesses = []
         addresses = []
@@ -158,9 +156,11 @@ class DataHandler:
         linker_docs = []
 
         for business_data in businesses_data:
-            if DataHandler.validate_data(business_data):
+            validation_status, status_code = DataHandler.validate_data(business_data)
+            if status_code == 200:
                 addresses.append(business_data['address'])
                 valid_businesses.append(business_data)
+                current_app.logger.info(f"validation status: {validation_status}")
             else:
                 continue
 
@@ -193,7 +193,7 @@ class DataHandler:
 
         linker_collection.insert_many(linker_docs)
 
-        return jsonify({"message": f"Successfully added {len(business_docs)} businesses"}), 201
+        return jsonify({"message": f"Successfully added {len(business_docs)} businesses"}), 200
         
     def autocomplete(query):
         url = "https://api.foursquare.com/v3/places/search"
@@ -327,7 +327,7 @@ class DataHandler:
         except Exception as e:
             return jsonify({'error': str(e)}), 500
         
-    
+    # Uses IBM Cloud's cos SDK to upload files to a Cloud Bucket
     def backup_database():
         try:
             # Iterate over all collections in the database
@@ -351,7 +351,7 @@ class DataHandler:
 
         except Exception as e:
             return jsonify({"error": str(e)}), 400
-        
+  
     @staticmethod
     def validate_data(business_data):
         current_app.logger.info(f"Received business data in validate_data method: {business_data}")
@@ -359,21 +359,25 @@ class DataHandler:
                         'has_available_resources', 'contact_info', 'yearly_revenue', 
                         'employee_count', 'customer_satisfaction', 'website_traffic']
 
-        # Validate required fields
         for field in required_fields:
             if field not in business_data or (isinstance(business_data[field], str) and not business_data[field].strip()):
-                return jsonify({'error': f'Missing or empty required field: {field}'}), 400
+                current_app.logger.info(f"Validation failed: Missing or empty required field: {field}")
+                return {'error': f'Missing or empty required field: {field}'}, 400
             if field == 'has_available_resources' and not isinstance(business_data[field], bool):
-                return jsonify({'error': f'Invalid data type for field: {field}'}), 400
+                current_app.logger.info(f"Validation failed: Invalid data type for field: {field}")
+                return {'error': f'Invalid data type for field: {field}'}, 400
             if field in ['yearly_revenue', 'employee_count', 'website_traffic'] and not isinstance(business_data[field], int):
-                return jsonify({'error': f'Invalid data type for field: {field}. Expected integer.'}), 400
+                current_app.logger.info(f"Validation failed: Invalid data type for field: {field}. Expected integer.")
+                return {'error': f'Invalid data type for field: {field}. Expected integer.'}, 400
             if field == 'customer_satisfaction' and not isinstance(business_data[field], (float, int)):
-                return jsonify({'error': f'Invalid data type for field: {field}. Expected float or integer.'}), 400
-            
+                current_app.logger.info(f"Validation failed: Invalid data type for field: {field}. Expected float or integer.")
+                return {'error': f'Invalid data type for field: {field}. Expected float or integer.'}, 400
+
         contact_info = business_data.get('contact_info', '')
         phone_number_pattern = r'^\d{10,11}$'
         if not re.match(phone_number_pattern, contact_info):
-            return jsonify({'error': 'Invalid phone number format. Expected 10 or 11 digits.'}), 400
+            current_app.logger.info(f"Validation failed: Invalid phone number format. Expected 10 or 11 digits.")
+            return {'error': 'Invalid phone number format. Expected 10 or 11 digits.'}, 400
         
         if isinstance(business_data.get('has_available_resources'), str):
             if business_data['has_available_resources'].lower() == 'true':
@@ -381,19 +385,21 @@ class DataHandler:
             elif business_data['has_available_resources'].lower() == 'false':
                 business_data['has_available_resources'] = False
 
-        # Validate address fields
         address_fields = ['line1', 'city', 'state', 'zipcode', 'country']
         if 'address' not in business_data or not isinstance(business_data['address'], dict):
-            return jsonify({'error': 'Missing or invalid address field'}), 400
+            current_app.logger.info(f"Validation failed: Missing or invalid address field.")
+            return {'error': 'Missing or invalid address field'}, 400
         for address_field in address_fields:
             if address_field not in business_data['address'] or not business_data['address'][address_field].strip():
-                return jsonify({'error': f'Missing or empty address field: {address_field}'}), 400
+                current_app.logger.info(f"Validation failed: Missing or empty address field: {address_field}")
+                return {'error': f'Missing or empty address field: {address_field}'}, 400
 
-        # Validate zipcode format
         if not re.match(r'^\d{5}$', business_data['address']['zipcode']):
-            return jsonify({'error': 'Invalid zipcode format.'}), 400
+            current_app.logger.info(f"Validation failed: Invalid zipcode format.")
+            return {'error': 'Invalid zipcode format.'}, 400
         
-        return True
+        current_app.logger.info(f"Data validated successfully: {business_data}")
+        return {'message': 'Data validated successfully.'}, 200
         
     @staticmethod
     def add_business_data(business_data):

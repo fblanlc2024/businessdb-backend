@@ -98,7 +98,6 @@ class GoogleAuth:
 
         response = make_response(redirect("https://localhost:8080/posting"))
 
-        # Set access token in HttpOnly cookie
         expiry_timestamp = credentials.expiry.timestamp()
         current_timestamp = datetime.utcnow().timestamp()
         seconds_until_expiry = expiry_timestamp - current_timestamp
@@ -107,16 +106,14 @@ class GoogleAuth:
         response.set_cookie('access_token_cookie', credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
         response.set_cookie('id_token', credentials.id_token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
 
-        # Set refresh token in HttpOnly cookie
-        # Note: Refresh tokens typically don't expire, but you can set a long duration
         refresh_token_expiration = GoogleAuth.add_months(datetime.utcnow(), 6)
         response.set_cookie('refresh_token_cookie', credentials.refresh_token, expires=refresh_token_expiration, httponly=True, secure=True, samesite='None')
         response.set_cookie('logged_in', 'true', httponly=False, max_age=5, secure=True, samesite='None')
 
         return response
     
+    # Google OAuth tokens expire after 6 months of not logging in, but native refresh tokens are still good to keep in the database in case something happens to the Google tokens.
     def refresh_token(refresh_token):
-        # Retrieve user data using the refresh token
         user_data = db.google_accounts.find_one({"refresh_token": refresh_token})
         if not user_data:
             return jsonify({'message': 'User not found'}), 401
@@ -132,31 +129,28 @@ class GoogleAuth:
         try:
             credentials.refresh(request_client)
         except RefreshError:
-            # Refresh token is invalid, clear the refresh token cookie
             response = make_response(jsonify({'message': 'Refresh token is invalid, please reauthenticate'}), 401)
             response.set_cookie('refresh_token_cookie', '', expires=0, httponly=True, secure=True, samesite='None')
             return response
 
-        # Refresh token is valid, update access token
         db.google_accounts.update_one(
             {"google_id": google_id},
             {"$set": {"access_token": credentials.token, "token_expiry": credentials.expiry}}
         )
-        # Create the response object
+
         response = make_response(jsonify({'message': 'Token refreshed successfully'}))
 
-        # Calculate the expiration time for the new access token
         expiry_timestamp = credentials.expiry.timestamp()
         current_timestamp = datetime.utcnow().timestamp()
         seconds_until_expiry = expiry_timestamp - current_timestamp
 
         access_token_expiration = datetime.utcnow() + timedelta(seconds=seconds_until_expiry)
 
-        # Set the new access token in an HttpOnly cookie
         response.set_cookie('access_token_cookie', credentials.token, expires=access_token_expiration, httponly=True, secure=True, samesite='None')
 
         return response
 
+    # Retrieves data from MongoDB
     def retrieve_data(google_access_token):
         headers = {'Authorization': 'Bearer ' + google_access_token}
         response = requests.get(USER_INFO, headers=headers)

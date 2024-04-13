@@ -8,6 +8,7 @@ class Email:
     def __init__(self):
         pass
 
+    # method that automatically sends an email from one address to another using SSL - pieces together the customer support ticket
     @staticmethod
     def send_email(from_email, app_password, to_email, subject, body):
         msg = MIMEMultipart()
