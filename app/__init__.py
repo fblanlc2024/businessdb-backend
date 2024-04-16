@@ -41,15 +41,20 @@ app.config['AUTH_URI'] = os.getenv('AUTH_URI')
 app.config['TOKEN_URI'] = os.getenv('TOKEN_URI')
 app.config['USER_INFO'] = os.getenv('USER_INFO')
 app.config['FOURSQUARE_API_KEY'] = os.getenv('FOURSQUARE_API_KEY')
+#change
 app.config['ATLAS_API_KEY'] = os.getenv('ATLAS_API_KEY')
 app.config['ATLAS_GROUP_ID'] = os.getenv('ATLAS_GROUP_ID')
 app.config['ATLAS_CLUSTER_NAME'] = os.getenv('ATLAS_CLUSTER_NAME')
+
 app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
 app.config['IBM_API_KEY'] = os.getenv('IBM_API_KEY')
 app.config['IBM_SERVICE_INSTANCE_ID'] = os.getenv('IBM_SERVICE_INSTANCE_ID')
 app.config['IBM_AUTH_URL'] = os.getenv('IBM_AUTH_URL')
 app.config['IBM_ENDPOINT_URL'] = os.getenv('IBM_ENDPOINT_URL')
+
+#change
 app.config['MONGODB_URI'] = os.getenv('MONGODB_URI')
+
 app.config['ASSISTANT_ID'] = os.getenv('ASSISTANT_ID')
 app.config['SENDING_EMAIL'] = os.getenv('SENDING_EMAIL')
 app.config['SENDING_EMAIL_PASSWORD'] = os.getenv('SENDING_EMAIL_PASSWORD')
@@ -67,6 +72,8 @@ if not app.config['JWT_SECRET_KEY']:
 if not app.config['JWT_ACCESS_TOKEN_EXPIRES']:
     raise ValueError("No JWT access token expiration time set")
 
+
+#This is the setup for mongoDb essentially
 CORS(app, resources={r"/*": {"origins": ["https://localhost:8080", "https://fbla-project-23e7b.web.app"]}}, supports_credentials=True)
 client = MongoClient(app.config['MONGODB_URI'])
 db = client.get_database('mathQuizDatabase')
