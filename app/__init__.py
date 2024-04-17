@@ -76,7 +76,7 @@ if not app.config['JWT_ACCESS_TOKEN_EXPIRES']:
 #This is the setup for mongoDb essentially
 CORS(app, resources={r"/*": {"origins": ["https://localhost:8080", "https://fbla-project-23e7b.web.app"]}}, supports_credentials=True)
 client = MongoClient(app.config['MONGODB_URI'])
-db = client.get_database('businessdb')
+db = client.get_database('BusinessDB')
 rate_limiting = db.get_collection('rate_limiting')
 
 redis_client = Redis(host='localhost', port=6379, db=0)
