@@ -1,6 +1,6 @@
 # 2024 FBLA Backend Project Submission
 
-## Description
+## Overview
 This is the backend for our 2024 FBLA Coding and Programming submission. Installation instructions are down below.
 
 ## Installation
