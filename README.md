@@ -33,3 +33,12 @@ Install all neccessary dependencies by running:
 ```bash
 pip install -r requirements.txt
 ```
+
+## Technologies Utilized
+| Technology | Description |
+| - | - |
+| ![Static Badge](https://img.shields.io/badge/Python-61DBFB?style=for-the-badge&logo=python&labelColor=black) | Python Flask
+| ![Static Badge](https://img.shields.io/badge/MongoDB-61DBFB?style=for-the-badge&logo=mongodb&labelColor=black) | MongoDB is a document database with the scalability and flexibility that you want with the querying and indexing that you need.
+| ![Static Badge](https://img.shields.io/badge/Google%20Cloud-61DBFB?style=for-the-badge&logo=Google%20Cloud&labelColor=black) | Google Cloud used for sign-in with google feature
+| ![Static Badge](https://img.shields.io/badge/IBM%20Cloud-61DBFB?style=for-the-badge&logo=IBM%20Cloud&labelColor=black) | IBM Cloud used for data backup from MongoDB Atlas for emergency recovery
+| ![Static Badge](https://img.shields.io/badge/Open%20AI-61DBFB?style=for-the-badge&logo=OpenAI&labelColor=black) | OpenAI API used for our custom AI Chat Bot Assistant
