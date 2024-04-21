@@ -1,7 +1,7 @@
-# FBLA Backend Project Submission
+# 2024 FBLA Backend Project Submission
 
 ## Description
-This is the backend for our FBLA project submission. Installation instructions are down below.
+This is the backend for our 2024 FBLA Coding and Programming submission. Installation instructions are down below.
 
 ## Installation
 
